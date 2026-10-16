@@ -8,38 +8,22 @@
  * decoupled from process spawning.
  */
 
-import { existsSync, realpathSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-
-import { RpcClient } from "@earendil-works/pi-coding-agent";
+import {
+  extractJsonObject,
+  runSubagentTurn,
+  SubagentProtocolError,
+  type SubagentRpc,
+} from "./subagent.ts";
 
 import type { VerifyVerdict } from "./types.ts";
 
-/** The minimal RpcClient surface runVerifier needs (injectable for tests). */
-export interface VerifierRpc {
-  /** Start the RPC child process. */
-  start(): Promise<void>;
-  /**
-   * Send one prompt and wait for the run to settle.
-   * @param message The user prompt for the verifier.
-   * @param timeoutMs Optional overall timeout in milliseconds.
-   */
-  promptAndWait(message: string, timeoutMs?: number): Promise<unknown>;
-  /** Text of the verifier's final assistant message, or null. */
-  getLastAssistantText(): Promise<string | null>;
-  /** Stop the RPC child process. Always called by runVerifier. */
-  stop(): Promise<void>;
-}
+export { extractJsonObject };
 
 /** Thrown when the verifier's response cannot be parsed into a verdict. */
-export class VerifierProtocolError extends Error {
-  readonly rawResponse: string;
-
+export class VerifierProtocolError extends SubagentProtocolError {
   constructor(message: string, rawResponse: string) {
-    super(message);
+    super(message, rawResponse);
     this.name = "VerifierProtocolError";
-    this.rawResponse = rawResponse;
   }
 }
 
@@ -99,34 +83,6 @@ export function buildVerifyPrompt(
   ].join("\n");
 }
 
-/** Extracts the first balanced JSON object found in a text, or null. */
-export function extractJsonObject(text: string): string | null {
-  const start = text.indexOf("{");
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (inString) {
-      if (ch === "\\") escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') inString = true;
-    else if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
 function isRequirementShaped(value: unknown): value is VerifyVerdict["requirements"][number] {
   if (typeof value !== "object" || value === null) return false;
   const r = value as Record<string, unknown>;
@@ -178,7 +134,7 @@ export function parseVerdict(contractId: string, raw: string): VerifyVerdict {
 export interface VerifierRequest {
   prompt: string;
   contractId: string;
-  rpc: VerifierRpc;
+  rpc: SubagentRpc;
   timeoutMs?: number;
 }
 
@@ -188,82 +144,9 @@ export interface VerifierRequest {
  */
 export async function runVerifier(request: VerifierRequest): Promise<VerifyVerdict> {
   const { prompt, contractId, rpc, timeoutMs } = request;
-  let raw: string | null;
-  await rpc.start();
-  try {
-    await rpc.promptAndWait(prompt, timeoutMs);
-    raw = await rpc.getLastAssistantText();
-  } finally {
-    await rpc.stop();
-  }
+  const raw = await runSubagentTurn(prompt, rpc, timeoutMs);
   if (raw === null) {
     throw new VerifierProtocolError("cowork-verifier returned no assistant text", "");
   }
   return parseVerdict(contractId, raw);
-}
-
-/** Options for spawning the production RPC transport. */
-export interface VerifierSpawnOptions {
-  /** Working directory for the verifier child process. */
-  cwd?: string;
-  /** Provider override; defaults to the child's own configuration. */
-  provider?: string;
-  /** Model override; defaults to the child's own configuration. */
-  model?: string;
-  /** Explicit CLI entry path; defaults to the running pi's own cli.js. */
-  cliPath?: string;
-  /** Extra CLI arguments for the child process. */
-  extraArgs?: string[];
-}
-
-/**
- * Resolves the CLI entry of the pi process running this extension, so the
- * verifier child uses the same installation as its parent.
- *
- * `process.argv[1]` is the symlink path (for example /usr/local/bin/pi) when
- * pi is launched from PATH, so it is resolved with realpath first. If the
- * running entry cannot be validated, falls back to the package installed
- * next to this extension. Never returns a relative path: a relative CLI path
- * is resolved against the child's cwd and breaks the spawn.
- */
-function resolveDefaultCliPath(): string {
-  const argv1 = process.argv[1] ?? "";
-  if (argv1.length > 0) {
-    try {
-      const real = realpathSync(argv1);
-      if (real.endsWith("cli.js") && real.includes("@earendil-works")) return real;
-    } catch {
-      // argv[1] may not exist on disk (embedded hosts); try the package next.
-    }
-  }
-  try {
-    const require = createRequire(import.meta.url);
-    const packageRoot = dirname(require.resolve("@earendil-works/pi-coding-agent"));
-    for (const candidate of [join(packageRoot, "cli.js"), join(packageRoot, "bundle", "cli.js")]) {
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch {
-    // Not resolvable from this extension's location.
-  }
-  throw new Error(
-    "gentle-cowork could not locate the pi CLI entry to spawn the verifier. " +
-      "Pass cliPath explicitly in VerifierSpawnOptions.",
-  );
-}
-
-/** Creates the production verifier transport: a `pi --mode rpc` child. */
-export function createRpcVerifier(options: VerifierSpawnOptions = {}): VerifierRpc {
-  const client = new RpcClient({
-    cliPath: options.cliPath ?? resolveDefaultCliPath(),
-    cwd: options.cwd,
-    provider: options.provider,
-    model: options.model,
-    args: ["--no-session", ...(options.extraArgs ?? [])],
-  });
-  return {
-    start: () => client.start(),
-    promptAndWait: (message, timeoutMs) => client.promptAndWait(message, undefined, timeoutMs),
-    getLastAssistantText: () => client.getLastAssistantText(),
-    stop: () => client.stop(),
-  };
 }

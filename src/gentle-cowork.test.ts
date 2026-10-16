@@ -71,6 +71,50 @@ const VERIFY_VERDICT_JSON = JSON.stringify({
   report: "All requirements verified.",
 });
 
+/** Dispatching fake for /cowork-chain: role-based responses per subagent turn. */
+function createChainConnectFake(options: { verifierAlwaysChanges?: boolean } = {}) {
+  const planJson = JSON.stringify([
+    {
+      step: 1,
+      objective: "Create the demo file.",
+      scope: ["docs/phase2-demo.md"],
+      acceptanceCriteria: ["The file exists with exactly one line."],
+    },
+  ]);
+  const artifactJson = JSON.stringify({
+    filesModified: ["docs/phase2-demo.md"],
+    changesSummary: "Created the demo file.",
+    stepsCompleted: ["created docs/phase2-demo.md"],
+    notes: "none",
+  });
+  return (_options: unknown) => {
+    let lastPrompt = "";
+    return {
+      start: vi.fn(async () => {}),
+      promptAndWait: vi.fn(async (message: string) => {
+        lastPrompt = message;
+        return [];
+      }),
+      getLastAssistantText: vi.fn(async () => {
+        const contractId = lastPrompt.match(/cc-\d+/)?.[0] ?? "cc-1";
+        if (lastPrompt.includes("cowork-planner")) return planJson;
+        if (lastPrompt.includes("cowork-implementer")) return artifactJson;
+        if (lastPrompt.includes("cowork-verifier")) {
+          const outcome = options.verifierAlwaysChanges ? "CHANGES" : "APPROVE";
+          return JSON.stringify({
+            contractId,
+            requirements: [{ id: "C1", verdict: outcome === "APPROVE" ? "pass" : "fail", evidence: "checked" }],
+            outcome,
+            report: "Step verdict.",
+          });
+        }
+        return "unknown role prompt";
+      }),
+      stop: vi.fn(async () => {}),
+    };
+  };
+}
+
 describe("gentle-cowork extension", () => {
   let mock: ApiMock;
 
@@ -175,6 +219,58 @@ describe("gentle-cowork /cowork-verify (Phase 1)", () => {
       const { ctx, notify } = createCtxMock();
       await local.commands.get("cowork-verify")!("", ctx);
       expect(notify).toHaveBeenCalledWith(expect.stringContaining("spawn failed"), "error");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+describe("gentle-cowork /cowork-chain (Phase 2)", () => {
+  it("registers /cowork-chain with the positional signature", () => {
+    const local = createApiMock();
+    gentleCoworkExtension(local.api);
+    expect(local.registerCommand).toHaveBeenCalledWith(
+      "cowork-chain",
+      expect.objectContaining({ description: expect.any(String) }),
+    );
+  });
+
+  it("runs the full chain through injected transports and reports completion", async () => {
+    const local = createApiMock();
+    gentleCoworkExtension(local.api, { connectSubagent: createChainConnectFake() });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { ctx, notify } = createCtxMock();
+      await local.commands.get("cowork-chain")!("", ctx);
+
+      const notified = notify.mock.calls.flat().map(String).join(" ");
+      expect(notified).toContain("planner");
+      expect(notified).toContain("completed");
+
+      const logged = errorSpy.mock.calls.flat().map(String).join(" ");
+      expect(logged).toContain("APPROVE");
+
+      const { ctx: contractCtx, notify: contractNotify } = createCtxMock();
+      await local.commands.get("cowork-contract")!("", contractCtx);
+      const contractText = String(contractNotify.mock.calls[0]?.[0]);
+      expect(contractText).toContain("docs/phase2-demo.md");
+      expect(contractText).toContain("completed");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("reports chain failure when a step exhausts its retries", async () => {
+    const local = createApiMock();
+    gentleCoworkExtension(local.api, { connectSubagent: createChainConnectFake({ verifierAlwaysChanges: true }) });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { ctx, notify } = createCtxMock();
+      await local.commands.get("cowork-chain")!("", ctx);
+      const notified = notify.mock.calls.flat().map(String).join(" ");
+      expect(notified).toContain("failed");
     } finally {
       errorSpy.mockRestore();
     }

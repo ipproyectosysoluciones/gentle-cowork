@@ -1,0 +1,30 @@
+name: CodeQL
+
+# Security scanning for the repository's branch rules (code_scanning:
+# CodeQL, security alerts high-or-higher; code_quality: warnings).
+# Runs on PRs into the protected branches, on pushes to them, and weekly.
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  security-events: write
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript-typescript"

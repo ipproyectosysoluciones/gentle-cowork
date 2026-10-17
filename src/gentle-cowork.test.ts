@@ -51,6 +51,26 @@ function customToolCall(toolName: string, input: Record<string, unknown>): Custo
   return { type: "tool_call", toolCallId: `tc-${toolName}`, toolName, input };
 }
 
+/** A fake VerifierRpc used as the injected transport for /cowork-verify tests. */
+function createVerifierRpcFake(response: string | null, options: { failOnPrompt?: Error } = {}) {
+  return {
+    start: vi.fn(async () => {}),
+    promptAndWait: vi.fn(async (_message: string) => {
+      if (options.failOnPrompt) throw options.failOnPrompt;
+      return [];
+    }),
+    getLastAssistantText: vi.fn(async () => response),
+    stop: vi.fn(async () => {}),
+  };
+}
+
+const VERIFY_VERDICT_JSON = JSON.stringify({
+  contractId: "vc-1",
+  requirements: [{ id: "S1", verdict: "pass", evidence: "src/types.ts declares specRef" }],
+  outcome: "APPROVE",
+  report: "All requirements verified.",
+});
+
 describe("gentle-cowork extension", () => {
   let mock: ApiMock;
 
@@ -109,5 +129,54 @@ describe("gentle-cowork extension", () => {
     const { ctx: contractCtx, notify } = createCtxMock();
     await mock.commands.get("cowork-contract")!("", contractCtx);
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("No contracts"), "info");
+  });
+});
+
+describe("gentle-cowork /cowork-verify (Phase 1)", () => {
+  it("registers /cowork-verify with the positional signature", () => {
+    const local = createApiMock();
+    gentleCoworkExtension(local.api);
+    expect(local.registerCommand).toHaveBeenCalledWith("cowork-verify", expect.objectContaining({ description: expect.any(String) }));
+  });
+
+  it("runs a verification through the injected transport, logs the verdict, and records the artifact", async () => {
+    const rpcFake = createVerifierRpcFake(VERIFY_VERDICT_JSON);
+    const local = createApiMock();
+    gentleCoworkExtension(local.api, { connectVerifier: () => rpcFake });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { ctx, notify } = createCtxMock();
+      await local.commands.get("cowork-verify")!("", ctx);
+
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("APPROVE"), "info");
+      expect(rpcFake.promptAndWait).toHaveBeenCalledWith(expect.stringContaining("cowork-verifier"), 120_000);
+      const logged = errorSpy.mock.calls.flat().map(String).join(" ");
+      expect(logged).toContain("vc-1");
+      expect(logged).toContain("APPROVE");
+
+      const { ctx: contractCtx, notify: contractNotify } = createCtxMock();
+      await local.commands.get("cowork-contract")!("", contractCtx);
+      const contractText = String(contractNotify.mock.calls[0]?.[0]);
+      expect(contractText).toContain("APPROVE");
+      expect(contractText).toContain("specRef");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("reports verification failures as error notifications", async () => {
+    const rpcFake = createVerifierRpcFake(null, { failOnPrompt: new Error("spawn failed") });
+    const local = createApiMock();
+    gentleCoworkExtension(local.api, { connectVerifier: () => rpcFake });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { ctx, notify } = createCtxMock();
+      await local.commands.get("cowork-verify")!("", ctx);
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("spawn failed"), "error");
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

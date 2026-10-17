@@ -13,7 +13,7 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
 
 ## Tasks
 
-- T1 · S1 · inline · commit: — Re-align `src/gentle-cowork.ts` with the real `ExtensionAPI` (typed, no `any`); registration unit tests (RED with current skeleton → GREEN after re-alignment); typecheck and load verified.
+- T1 · S1 · inline · commit: `919989a` · DONE — Re-align `src/gentle-cowork.ts` with the real `ExtensionAPI` (typed, no `any`); registration unit tests (RED with current skeleton → GREEN after re-alignment); typecheck and load verified. Verified: vitest 5/5, tsc clean, real load check LOAD_OK. Also added `.gitignore`, `test` script, `allowImportingTsExtensions`.
 - T2 · S2 · inline · commit: — Phase 1: spawn a `cowork-verifier` subagent with a test prompt, receive structured APPROVE/CHANGES verdict, log the verdict.
 - T3 · S3 · route TBD · commit: — Phase 2: full planner → implementer → verifier chain with CHANGES retry loop (max 3).
 - T4 · S4 · route TBD · commit: — Phase 3: `tool_call` hook — invisible delegation, role orchestration only when a named reason exists; native delegation otherwise untouched.

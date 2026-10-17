@@ -1,0 +1,4 @@
+# Free-form ("blank") issues are disabled in this repository:
+# every issue must go through a contract template (bug report or
+# feature request), so reports arrive evidence-first.
+blank_issues_enabled: false

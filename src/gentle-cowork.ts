@@ -429,6 +429,14 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
   }
 
   pi.on("tool_call", async (event, ctx) => {
+    // BLA-25 — flat-tree defense: this session may itself be a role child
+    // spawned by another gentle-cowork instance (the extension is loaded
+    // from the agent home by every pi session). A role child NEVER
+    // intercepts: re-chaining its own model's delegations would recurse
+    // the flat tree. Blackboard persistence stays for all roles (S5) —
+    // only interception is gated.
+    if (process.env.GENTLE_COWORK_ROLE === "1") return;
+
     // Phase 3 — invisible delegation. ODD already decided this delegation
     // has a valid reason; gentle-cowork applies role orchestration INSTEAD
     // of the native delegation and reports the chain result back to the
@@ -474,7 +482,13 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
       model: ctx.model?.id,
     };
 
-    void runDelegatedChain(pi, contract, ctx.cwd, connectSubagent, spawnOptions);
+    void runDelegatedChain(pi, contract, ctx.cwd, connectSubagent, spawnOptions).catch((error) => {
+      // The chain's own handler already persists "failed" and reports;
+      // this catch is the last-resort guard so no rejection can ever
+      // crash the host session (BLA-25: unhandled rejections are fatal
+      // in Node 24 and took down live role children).
+      console.error(`[gentle-cowork] delegated chain crashed for ${contract.id}:`, error);
+    });
 
     return {
       block: true,

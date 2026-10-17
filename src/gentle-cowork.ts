@@ -12,6 +12,10 @@
  * and logs it to the launcher log (stderr).
  * Phase 2 scope: /cowork-chain runs the full planner → implementer →
  * verifier cycle per step, retrying after CHANGES verdicts (max 3).
+ * Phase 4 scope: every TaskContract transition — delegation interception,
+ * chain start/result, verify artifact recording — is persisted to the
+ * shared blackboard state file, and session_start reloads it, so
+ * contract state survives daemon restarts.
  */
 
 import type {
@@ -22,6 +26,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { TaskContract } from "./types.ts";
+import { defaultBlackboardPath, openBlackboard, type Blackboard } from "./blackboard.ts";
 import { createRpcSubagent, type SubagentRpc, type SubagentSpawnOptions } from "./subagent.ts";
 import { PHASE1_TEST_REQUIREMENTS, buildVerifyPrompt, runVerifier } from "./verifier.ts";
 import { PHASE2_TEST_OBJECTIVE, runChain, type ChainDeps } from "./roles.ts";
@@ -119,6 +124,22 @@ function buildContract(
   };
 }
 
+/**
+ * Highest numeric suffix among persisted contract ids with this prefix,
+ * so contract numbering continues after a restart instead of colliding
+ * with ids already on the blackboard.
+ */
+function maxContractNumber(contracts: readonly TaskContract[], prefix: string): number {
+  const stem = `${prefix}-`;
+  let max = 0;
+  for (const contract of contracts) {
+    if (!contract.id.startsWith(stem)) continue;
+    const suffix = Number(contract.id.slice(stem.length));
+    if (Number.isFinite(suffix) && suffix > max) max = suffix;
+  }
+  return max;
+}
+
 /** Notifies a message through ctx.ui with an optional level (default info). */
 function notify(
   ctx: ExtensionCommandContext,
@@ -142,6 +163,50 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
   let verifyCounter = 0;
   let chainCounter = 0;
   let lastContract: TaskContract | undefined;
+  let board: Blackboard | undefined;
+
+  /** Returns the session's open blackboard, opening it lazily on first use. */
+  function ensureBoard(cwd: string): Blackboard {
+    if (!board) board = openBlackboard(defaultBlackboardPath(cwd));
+    return board;
+  }
+
+  /**
+   * Persists one TaskContract transition to the shared blackboard state
+   * file. Persistence never breaks orchestration: failures (and a missing
+   * project cwd) are logged to the launcher log and the run continues.
+   */
+  function persistContract(cwd: string | undefined, contract: TaskContract): void {
+    if (typeof cwd !== "string" || cwd.length === 0) {
+      console.error(`[gentle-cowork] blackboard persist skipped for ${contract.id}: no project cwd`);
+      return;
+    }
+    try {
+      ensureBoard(cwd).putContract(contract);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[gentle-cowork] blackboard persist failed for ${contract.id}: ${message}`);
+    }
+  }
+
+  pi.on("session_start", (event, ctx) => {
+    // Phase 4 — blackboard state (S5): reload persisted contracts so a
+    // daemon restart never loses contract state. A corrupt or missing
+    // state file fails safe to an empty board inside openBlackboard.
+    const restored = openBlackboard(defaultBlackboardPath(ctx.cwd));
+    board = restored;
+    const contracts = restored.listContracts();
+    contractCounter = Math.max(contractCounter, maxContractNumber(contracts, "gc"));
+    verifyCounter = Math.max(verifyCounter, maxContractNumber(contracts, "vc"));
+    chainCounter = Math.max(chainCounter, maxContractNumber(contracts, "ch"));
+    lastContract =
+      [...contracts].reverse().find((contract) => contract.status === "in_progress") ??
+      contracts.at(-1);
+    console.error(
+      `[gentle-cowork] blackboard restored ${contracts.length} contract(s) from ` +
+        `${restored.filePath} (session_start: ${event.reason})`,
+    );
+  });
 
   pi.registerCommand(STATUS_COMMAND, {
     description: "Show gentle-cowork orchestration status",
@@ -191,7 +256,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
         console.error(JSON.stringify(verdict, null, 2));
 
         // The verification task itself completed; the verdict is its artifact.
-        lastContract = {
+        const verifiedContract: TaskContract = {
           ...buildContract(
             contractId,
             "Phase 1 verification test",
@@ -203,6 +268,8 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
           artifacts: [JSON.stringify(verdict)],
           status: "completed",
         };
+        lastContract = verifiedContract;
+        persistContract(ctx.cwd, verifiedContract);
 
         const summary = verdict.requirements.map((r) => `${r.id}:${r.verdict}`).join(", ");
         notify(ctx, `${PREFIX} Verifier verdict: ${verdict.outcome} — ${summary}`);
@@ -219,6 +286,14 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
     description: "Phase 2: run the full planner → implementer → verifier chain with a test objective",
     handler: async (_args: string, ctx) => {
       const contractId = `ch-${++chainCounter}`;
+      // Phase 4 — persist the chain contract as in_progress from the moment
+      // the chain starts, so an interrupted run leaves a resumable record.
+      const started: TaskContract = {
+        ...buildContract(contractId, PHASE2_TEST_OBJECTIVE, "planner", [], [], SPEC_REF),
+        status: "in_progress",
+      };
+      lastContract = started;
+      persistContract(ctx.cwd, started);
       notify(
         ctx,
         `${PREFIX} Running Phase 2 chain: planner → implementer → verifier. Objective: ${PHASE2_TEST_OBJECTIVE}`,
@@ -245,7 +320,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
         console.error(JSON.stringify(result, null, 2));
 
         const completed = result.steps.filter((s) => s.status === "completed").length;
-        lastContract = {
+        const finishedContract: TaskContract = {
           ...buildContract(
             contractId,
             PHASE2_TEST_OBJECTIVE,
@@ -257,6 +332,8 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
           artifacts: [JSON.stringify(result)],
           status: result.status === "completed" ? "completed" : "failed",
         };
+        lastContract = finishedContract;
+        persistContract(ctx.cwd, finishedContract);
 
         if (result.status === "completed") {
           notify(ctx, `${PREFIX} Chain completed: ${completed}/${result.steps.length} steps`);
@@ -270,6 +347,11 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[gentle-cowork] chain failed for ${contractId}: ${message}`);
+        // Phase 4 — a thrown chain is a failed contract; never leave the
+        // blackboard claiming it is still in progress.
+        const failedContract: TaskContract = { ...started, status: "failed" };
+        lastContract = failedContract;
+        persistContract(ctx.cwd, failedContract);
         notify(ctx, `${PREFIX} Chain failed: ${message}`, "error");
       }
     },
@@ -278,16 +360,16 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
   /** Runs the role chain for an intercepted delegation and reports back. */
   async function runDelegatedChain(
     pi: ExtensionAPI,
-    contractId: string,
-    objective: string,
-    specRef: string,
+    contract: TaskContract,
+    cwd: string | undefined,
     connect: (options: SubagentSpawnOptions) => SubagentRpc,
     spawnOptions: SubagentSpawnOptions,
   ): Promise<void> {
+    const contractId = contract.id;
     try {
       const result = await runChain(
-        objective,
-        specRef,
+        contract.objective,
+        contract.specRef,
         { connect, spawnOptions, timeoutMs: CHAIN_TIMEOUT_MS, maxRetries: MAX_CHAIN_RETRIES },
         (line) => {
           console.error(`[gentle-cowork] chain progress (${contractId}): ${line}`);
@@ -312,13 +394,19 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
         { triggerTurn: true },
       );
 
-      const contract = lastContract;
-      if (contract && contract.id === contractId) {
-        lastContract = {
-          ...contract,
-          status: result.status === "completed" ? "completed" : "failed",
-          artifacts: [JSON.stringify(result)],
-        };
+      // Phase 4 — persist the final transition even when lastContract has
+      // already moved on: the blackboard is the durable record, lastContract
+      // is only the status surface.
+      const finalStatus = result.status === "completed" ? "completed" : "failed";
+      const finalContract: TaskContract = {
+        ...contract,
+        status: finalStatus,
+        artifacts: [JSON.stringify(result)],
+      };
+      persistContract(cwd, finalContract);
+      const current = lastContract;
+      if (current && current.id === contractId) {
+        lastContract = finalContract;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -331,9 +419,11 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
         },
         { triggerTurn: true },
       );
-      const contract = lastContract;
-      if (contract && contract.id === contractId) {
-        lastContract = { ...contract, status: "failed" };
+      const failedContract: TaskContract = { ...contract, status: "failed" };
+      persistContract(cwd, failedContract);
+      const current = lastContract;
+      if (current && current.id === contractId) {
+        lastContract = failedContract;
       }
     }
   }
@@ -360,7 +450,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
 
     contractCounter += 1;
     const contractId = `gc-${contractCounter}`;
-    lastContract = {
+    const contract: TaskContract = {
       ...buildContract(
         contractId,
         objective,
@@ -371,6 +461,10 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
       ),
       status: "in_progress",
     };
+    lastContract = contract;
+    // Phase 4 — persist the in_progress contract immediately: a daemon
+    // restart during the background chain must leave it resumable (S5).
+    persistContract(ctx.cwd, contract);
 
     // Capture plain data from the context now: the chain outlives this
     // handler, and a live context may be invalidated by later events.
@@ -380,7 +474,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
       model: ctx.model?.id,
     };
 
-    void runDelegatedChain(pi, contractId, objective, specRef, connectSubagent, spawnOptions);
+    void runDelegatedChain(pi, contract, ctx.cwd, connectSubagent, spawnOptions);
 
     return {
       block: true,

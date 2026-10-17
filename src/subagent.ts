@@ -98,6 +98,8 @@ export interface SubagentSpawnOptions {
   cliPath?: string;
   /** Extra CLI arguments for the child process. */
   extraArgs?: string[];
+  /** Extra environment variables for the child process. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -143,7 +145,13 @@ export function createRpcSubagent(options: SubagentSpawnOptions = {}): SubagentR
     cwd: options.cwd,
     provider: options.provider,
     model: options.model,
-    args: ["--no-session", ...(options.extraArgs ?? [])],
+    // Flat-tree defense (BLA-25): every child spawned here is a role
+    // child. Mark it so its own gentle-cowork instance (loaded from the
+    // agent home by every pi session) disarms interception, and remove
+    // the delegation tools entirely so a role can never spawn
+    // sub-subagents — natively or through the hook.
+    env: { GENTLE_COWORK_ROLE: "1", ...options.env },
+    args: ["--no-session", "--exclude-tools", "subagent_*", ...(options.extraArgs ?? [])],
   });
   return {
     start: () => client.start(),

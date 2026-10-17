@@ -1,0 +1,32 @@
+# Automated versioning and releases via release-please.
+#
+# Conventional-commit parsing (release-please defaults, release-type: node):
+#   feat:                                        -> minor version bump (Features)
+#   fix:                                         -> patch version bump (Bug Fixes)
+#   feat!: / fix!: / "BREAKING CHANGE:" footer   -> major version bump
+#   docs: / chore: / test: / refactor:           -> no release (no version bump)
+#
+# Flow: a push to main triggers release-please, which maintains the automated
+# release PR ("chore(main): release X.Y.Z") bumping package.json and
+# CHANGELOG.md. Merging that release PR tags vX.Y.Z and publishes the
+# GitHub release. The version bump is then merged back into dev.
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          release-type: node
+          package-name: gentle-cowork

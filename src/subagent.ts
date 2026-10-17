@@ -28,6 +28,12 @@ export interface SubagentRpc {
   getLastAssistantText(): Promise<string | null>;
   /** Stop the RPC child process. Always called by runSubagentTurn. */
   stop(): Promise<void>;
+  /**
+   * Cheap state poll used as the readiness handshake (BLA-26). Optional:
+   * transports that cannot poll state rely on the client's own send-timeout
+   * window for the first prompt.
+   */
+  getState?(): Promise<unknown>;
 }
 
 /** Thrown when a subagent's response cannot be parsed into its contract. */
@@ -98,6 +104,8 @@ export interface SubagentSpawnOptions {
   cliPath?: string;
   /** Extra CLI arguments for the child process. */
   extraArgs?: string[];
+  /** Extra environment variables for the child process. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -143,14 +151,46 @@ export function createRpcSubagent(options: SubagentSpawnOptions = {}): SubagentR
     cwd: options.cwd,
     provider: options.provider,
     model: options.model,
-    args: ["--no-session", ...(options.extraArgs ?? [])],
+    // Flat-tree defense (BLA-25): every child spawned here is a role
+    // child. Mark it so its own gentle-cowork instance (loaded from the
+    // agent home by every pi session) disarms interception, and remove
+    // the delegation tools entirely so a role can never spawn
+    // sub-subagents — natively or through the hook.
+    env: { GENTLE_COWORK_ROLE: "1", ...options.env },
+    args: ["--no-session", "--exclude-tools", "subagent_*", ...(options.extraArgs ?? [])],
   });
   return {
     start: () => client.start(),
     promptAndWait: (message, timeoutMs) => client.promptAndWait(message, undefined, timeoutMs),
     getLastAssistantText: () => client.getLastAssistantText(),
+    getState: () => client.getState(),
     stop: () => client.stop(),
   };
+}
+
+/** Readiness handshake budget (BLA-26): attempts before giving up. */
+const READINESS_ATTEMPTS = 4;
+
+/**
+ * BLA-26 — waits for a fresh child to finish booting before the first
+ * prompt. A pi child loads the whole agent home (every extension) and can
+ * take ~17s+ to become ready; the RpcClient's per-request timeout is a
+ * fixed 30s, so a prompt sent during boot can lose the race and abort the
+ * whole turn. A failed get_state poll just means "not ready yet".
+ */
+async function waitUntilReady(rpc: SubagentRpc): Promise<void> {
+  if (!rpc.getState) return;
+  for (let attempt = 1; attempt <= READINESS_ATTEMPTS; attempt++) {
+    try {
+      await rpc.getState();
+      return;
+    } catch {
+      // Still booting — the send-timeout of the poll is the wait itself.
+    }
+  }
+  throw new Error(
+    `gentle-cowork: the subagent child did not become ready after ${READINESS_ATTEMPTS} handshake attempts`,
+  );
 }
 
 /**
@@ -167,6 +207,7 @@ export async function runSubagentTurn(
   let raw: string | null;
   await rpc.start();
   try {
+    await waitUntilReady(rpc);
     await rpc.promptAndWait(prompt, timeoutMs);
     raw = await rpc.getLastAssistantText();
   } finally {

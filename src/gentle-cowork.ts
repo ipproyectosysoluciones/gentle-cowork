@@ -275,21 +275,119 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
     },
   });
 
-  pi.on("tool_call", (event) => {
-    // ODD already decided this delegation has a valid named reason.
-    // gentle-cowork records the contract; role orchestration arrives with
-    // the later ROADMAP phases.
+  /** Runs the role chain for an intercepted delegation and reports back. */
+  async function runDelegatedChain(
+    pi: ExtensionAPI,
+    contractId: string,
+    objective: string,
+    specRef: string,
+    connect: (options: SubagentSpawnOptions) => SubagentRpc,
+    spawnOptions: SubagentSpawnOptions,
+  ): Promise<void> {
+    try {
+      const result = await runChain(
+        objective,
+        specRef,
+        { connect, spawnOptions, timeoutMs: CHAIN_TIMEOUT_MS, maxRetries: MAX_CHAIN_RETRIES },
+        (line) => {
+          console.error(`[gentle-cowork] chain progress (${contractId}): ${line}`);
+        },
+      );
+
+      // Log the chain result to the launcher log (stderr).
+      console.error(`[gentle-cowork] chain result for ${contractId}: ${result.status}`);
+      console.error(JSON.stringify(result, null, 2));
+
+      const completed = result.steps.filter((s) => s.status === "completed").length;
+      pi.sendMessage(
+        {
+          customType: "gentle-cowork-chain-result",
+          content: JSON.stringify({
+            contractId,
+            status: result.status,
+            steps: result.steps.map((s) => ({ step: s.step, attempts: s.attempts, status: s.status })),
+          }),
+          display: true,
+        },
+        { triggerTurn: true },
+      );
+
+      const contract = lastContract;
+      if (contract && contract.id === contractId) {
+        lastContract = {
+          ...contract,
+          status: result.status === "completed" ? "completed" : "failed",
+          artifacts: [JSON.stringify(result)],
+        };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[gentle-cowork] chain failed for ${contractId}: ${message}`);
+      pi.sendMessage(
+        {
+          customType: "gentle-cowork-chain-result",
+          content: JSON.stringify({ contractId, status: "failed", error: message }),
+          display: true,
+        },
+        { triggerTurn: true },
+      );
+      const contract = lastContract;
+      if (contract && contract.id === contractId) {
+        lastContract = { ...contract, status: "failed" };
+      }
+    }
+  }
+
+  pi.on("tool_call", async (event, ctx) => {
+    // Phase 3 — invisible delegation. ODD already decided this delegation
+    // has a valid reason; gentle-cowork applies role orchestration INSTEAD
+    // of the native delegation and reports the chain result back to the
+    // main agent. Without a named reason, native delegation proceeds
+    // untouched (do NOT intercept).
     if (!isDelegationTrigger(event.toolName) || !isCustomToolCall(event)) return;
 
-    const { input } = event;
+    const input = event.input;
+    const namedReason = readStringField(input, "reason", "");
+    if (namedReason === "") {
+      // No named reason: do NOT intercept (ROADMAP Phase 3).
+      return;
+    }
+
+    const objective = readStringField(input, "objective", "Delegated task");
+    const scope = readStringArrayField(input, "scope");
+    const criteria = readStringArrayField(input, "criteria");
+    const specRef = readStringField(input, "specRef", SPEC_REF);
+
     contractCounter += 1;
-    lastContract = buildContract(
-      `gc-${contractCounter}`,
-      readStringField(input, "objective", "Delegated task"),
-      "implementer",
-      readStringArrayField(input, "scope"),
-      readStringArrayField(input, "criteria"),
-      readStringField(input, "specRef", "odd/tasks/current.md"),
-    );
+    const contractId = `gc-${contractCounter}`;
+    lastContract = {
+      ...buildContract(
+        contractId,
+        objective,
+        "planner",
+        scope,
+        criteria.length > 0 ? criteria : [`named reason: ${namedReason}`],
+        specRef,
+      ),
+      status: "in_progress",
+    };
+
+    // Capture plain data from the context now: the chain outlives this
+    // handler, and a live context may be invalidated by later events.
+    const spawnOptions: SubagentSpawnOptions = {
+      cwd: ctx.cwd,
+      provider: ctx.model?.provider,
+      model: ctx.model?.id,
+    };
+
+    void runDelegatedChain(pi, contractId, objective, specRef, connectSubagent, spawnOptions);
+
+    return {
+      block: true,
+      reason:
+        `gentle-cowork: role orchestration applied for ${contractId} ` +
+        `(named reason: "${namedReason}"); native delegation skipped — ` +
+        `the chain result will arrive as a session message.`,
+    };
   });
 }

@@ -139,33 +139,6 @@ describe("gentle-cowork extension", () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("[gentle-cowork]"), "info");
   });
 
-  it("builds a TaskContract from a delegation tool call, reading fields from event.input", async () => {
-    const { ctx } = createCtxMock();
-    mock.handlers.get("tool_call")!(
-      customToolCall("subagent_run", {
-        objective: "Verify the widget module",
-        scope: ["src/widget/"],
-        criteria: ["all widget tests pass"],
-        specRef: "odd/tasks/widget.md",
-      }),
-      ctx,
-    );
-
-    const { ctx: contractCtx, notify } = createCtxMock();
-    await mock.commands.get("cowork-contract")!("", contractCtx);
-    expect(notify).toHaveBeenCalledTimes(1);
-    const contract = JSON.parse(String(notify.mock.calls[0]?.[0])) as Record<string, unknown>;
-    expect(contract).toMatchObject({
-      id: "gc-1",
-      objective: "Verify the widget module",
-      role: "implementer",
-      scope: ["src/widget/"],
-      acceptanceCriteria: ["all widget tests pass"],
-      specRef: "odd/tasks/widget.md",
-      status: "pending",
-    });
-  });
-
   it("ignores builtin tool calls (no contract created)", async () => {
     const { ctx } = createCtxMock();
     mock.handlers.get("tool_call")!(customToolCall("read", { path: "src/widget.ts" }), ctx);

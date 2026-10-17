@@ -5,8 +5,21 @@
   "type": "module",
   "main": "src/gentle-cowork.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
-  "keywords": ["pi", "gentle-shell", "gentle-ai", "extension", "orchestration", "odd"],
-  "license": "MIT"
+  "keywords": [
+    "pi",
+    "gentle-shell",
+    "gentle-ai",
+    "extension",
+    "orchestration",
+    "odd"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
 }

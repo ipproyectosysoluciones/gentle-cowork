@@ -23,35 +23,35 @@ flowchart LR
 
 ## Phase 1 — Single-role verification
 
-- [ ] Spawn a `cowork-verifier` subagent (`pi --mode rpc`) with a test prompt
-- [ ] Receive the verifier's verdict (APPROVE/CHANGES)
-- [ ] Log the verdict to the launcher log
+- [x] Spawn a `cowork-verifier` subagent (`pi --mode rpc`) with a test prompt
+- [x] Receive the verifier's verdict (APPROVE/CHANGES)
+- [x] Log the verdict to the launcher log
 
 **Exit criteria:** A verifier subagent runs, reads a test file, and returns a structured verdict.
 
 ## Phase 2 — Planner → Implementer → Verifier chain
 
-- [ ] `cowork-planner` receives an objective, returns a plan (list of steps with scope + criteria)
-- [ ] `cowork-implementer` receives one step, executes it, returns an artifact summary
-- [ ] `cowork-verifier` receives the artifact, runs tests, returns a per-S# verdict
-- [ ] If verdict is `CHANGES`, loop back to implementer (max 3 retries)
+- [x] `cowork-planner` receives an objective, returns a plan (list of steps with scope + criteria)
+- [x] `cowork-implementer` receives one step, executes it, returns an artifact summary
+- [x] `cowork-verifier` receives the artifact, runs tests, returns a per-S# verdict
+- [x] If verdict is `CHANGES`, loop back to implementer (max 3 retries)
 
 **Exit criteria:** A complete plan → implement → verify cycle runs without manual intervention.
 
 ## Phase 3 — ODD integration (invisible delegation)
 
-- [ ] Hook into `tool_call` — detect when gentle-shell is about to delegate (tool names containing "delegate" or "subagent")
-- [ ] When detected and a named reason exists → apply role orchestration instead of native delegation
-- [ ] When no reason exists → let native delegation proceed (do NOT intercept)
-- [ ] The user should never need to invoke `/cowork` explicitly
+- [x] Hook into `tool_call` — detect when gentle-shell is about to delegate (tool names containing "delegate" or "subagent")
+- [x] When detected and a named reason exists → apply role orchestration instead of native delegation
+- [x] When no reason exists → let native delegation proceed (do NOT intercept)
+- [x] The user should never need to invoke `/cowork` explicitly
 
 **Exit criteria:** Delegation happens naturally; the user describes what they need and the orchestration is invisible.
 
 ## Phase 4 — Blackboard state (shared orchestration state)
 
-- [ ] A shared state file (JSON) that all roles read/write
-- [ ] TaskContract persistence (pending → in_progress → completed/failed)
-- [ ] Survives daemon restart (state file on disk)
+- [x] A shared state file (JSON) that all roles read/write
+- [x] TaskContract persistence (pending → in_progress → completed/failed)
+- [x] Survives daemon restart (state file on disk)
 
 **Exit criteria:** A delegation can be interrupted and resumed without losing the contract state.
 

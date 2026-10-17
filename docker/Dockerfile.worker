@@ -1,0 +1,15 @@
+# gentle-cowork Worker node
+# Runs the WebSocket client that receives and executes TaskContracts.
+FROM node:24-alpine
+
+WORKDIR /app
+
+RUN npm init -y && npm install ws
+
+COPY src/ ./src/
+COPY package.json ./
+
+ENV GC_MASTER_URL=ws://gc-master:9400
+ENV GC_WORKER_ROLE=implementer
+
+CMD ["node", "src/worker.ts"]

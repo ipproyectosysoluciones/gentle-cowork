@@ -1,0 +1,50 @@
+# gentle-cowork — Multi-node orchestration (Phase 5)
+# Master node: dispatches TaskContracts to workers
+# Worker node: receives and executes TaskContracts
+#
+# Usage:
+#   docker compose up --build
+#   docker compose logs -f gc-master
+#   docker compose logs -f gc-worker
+#
+# Submit a test task:
+#   curl -X POST http://localhost:9401/task \
+#     -H "Content-Type: application/json" \
+#     -d '{"id":"test-1","objective":"Test task","role":"implementer","scope":["src/"],"acceptanceCriteria":["it works"],"specRef":"odd/tasks/test.md","artifacts":[],"status":"pending"}'
+#
+# Check status:
+#   curl http://localhost:9401/status
+
+services:
+  gc-master:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.master
+    container_name: gc-master
+    ports:
+      - "9400:9400"   # WebSocket
+      - "9401:9401"   # HTTP API (task submission + status)
+    networks:
+      - gc-network
+    environment:
+      - GC_MASTER_PORT=9400
+    restart: unless-stopped
+
+  gc-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: gc-worker
+    networks:
+      - gc-network
+    environment:
+      - GC_MASTER_URL=ws://gc-master:9400
+      - GC_WORKER_ROLE=implementer
+    depends_on:
+      - gc-master
+    restart: unless-stopped
+
+networks:
+  gc-network:
+    driver: bridge
+    name: gc-network

@@ -1,0 +1,21 @@
+# gentle-cowork Master node
+# Runs the WebSocket orchestrator that dispatches TaskContracts to workers.
+FROM node:24-alpine
+
+WORKDIR /app
+
+# Install ws dependency (minimal)
+RUN npm init -y && npm install ws
+
+# Copy the source
+COPY src/ ./src/
+COPY package.json ./
+
+# The master needs: ws, master.ts, types.ts
+EXPOSE 9400 9401
+
+# Health check
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:9401/status || exit 1
+
+CMD ["node", "src/master.ts"]

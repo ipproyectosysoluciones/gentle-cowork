@@ -222,4 +222,76 @@ describe("gentle-cowork invisible delegation (Phase 3)", () => {
     await local.commands.get("cowork-contract")!("", contractCtx);
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("No contracts"), "info");
   });
+
+  it("does not intercept delegations when running as a role child (BLA-25)", async () => {
+    process.env.GENTLE_COWORK_ROLE = "1";
+    try {
+      const local = createApiMock();
+      gentleCoworkExtension(local.api, { connectSubagent: createChainConnectFake() });
+      const { ctx } = createCtxMock();
+      const handler = local.handlers.get("tool_call")!;
+
+      const result = await handler(
+        customToolCall("subagent_run", {
+          objective: "Verify the widget module",
+          scope: ["src/widget/"],
+          criteria: [],
+          specRef: "odd/tasks/widget.md",
+          reason: "independent verification",
+        }),
+        ctx,
+      );
+
+      // Native delegation proceeds untouched: no block, no chain, no report.
+      expect(result).toBeUndefined();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(local.sendMessage).not.toHaveBeenCalled();
+
+      const { ctx: contractCtx, notify } = createCtxMock();
+      await local.commands.get("cowork-contract")!("", contractCtx);
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("No contracts"), "info");
+    } finally {
+      delete process.env.GENTLE_COWORK_ROLE;
+    }
+  });
+
+  it("never crashes the session when the delegated chain throws beyond its handler (BLA-25)", async () => {
+    const local = createApiMock();
+    const explodingConnect = () => ({
+      start: vi.fn(async () => {
+        throw new Error("spawn failed");
+      }),
+      promptAndWait: vi.fn(async () => []),
+      getLastAssistantText: vi.fn(async () => null),
+      stop: vi.fn(async () => {}),
+    });
+    // The internal handler persists "failed" and calls sendMessage; make
+    // sendMessage itself throw so the failure escapes the handler and only
+    // the outer .catch can keep the session alive.
+    local.sendMessage.mockImplementation(() => {
+      throw new Error("session closed");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      gentleCoworkExtension(local.api, { connectSubagent: explodingConnect });
+      const { ctx } = createCtxMock();
+      await local.handlers.get("tool_call")!(
+        customToolCall("subagent_run", {
+          objective: "Add the demo widget",
+          scope: ["src/widget/"],
+          criteria: [],
+          specRef: "odd/tasks/widget.md",
+          reason: "real parallelism",
+        }),
+        ctx,
+      );
+      await new Promise((r) => setTimeout(r, 80));
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("delegated chain crashed"),
+        expect.any(Error),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });

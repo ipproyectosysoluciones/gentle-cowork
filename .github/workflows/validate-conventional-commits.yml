@@ -1,0 +1,42 @@
+name: validate-conventional-commits
+
+# Contract: every commit merged into main or dev must have a Conventional
+# Commits title (the repo's binding contract — see .github/CONTRIBUTING.md).
+# Merge commits are excluded: they carry the PR subject, not content commits.
+on:
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate commit titles against the Conventional Commits contract
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]*\))?(!)?: .{1,200}'
+          commits=$(git log --no-merges --format=%s "$BASE_SHA..$HEAD_SHA")
+          if [ -z "$commits" ]; then
+            echo "No content commits to validate."
+            exit 0
+          fi
+          status=0
+          while IFS= read -r subject; do
+            if echo "$subject" | grep -qE "$pattern"; then
+              echo "ok: $subject"
+            else
+              echo "::error title=Contract violation::Commit title is not a Conventional Commit: '$subject'"
+              status=1
+            fi
+          done <<< "$commits"
+          if [ "$status" -ne 0 ]; then
+            echo "One or more commit titles violate the Conventional Commits contract."
+          fi
+          exit $status

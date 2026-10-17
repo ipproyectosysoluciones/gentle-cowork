@@ -10,6 +10,8 @@
  * Phase 1 scope: /cowork-verify spawns a cowork-verifier subagent
  * (pi --mode rpc) with a test prompt, parses its structured verdict,
  * and logs it to the launcher log (stderr).
+ * Phase 2 scope: /cowork-chain runs the full planner → implementer →
+ * verifier cycle per step, retrying after CHANGES verdicts (max 3).
  */
 
 import type {
@@ -20,25 +22,31 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { TaskContract } from "./types.ts";
-import {
-  PHASE1_TEST_REQUIREMENTS,
-  buildVerifyPrompt,
-  createRpcVerifier,
-  runVerifier,
-  type VerifierRpc,
-  type VerifierSpawnOptions,
-} from "./verifier.ts";
+import { createRpcSubagent, type SubagentRpc, type SubagentSpawnOptions } from "./subagent.ts";
+import { PHASE1_TEST_REQUIREMENTS, buildVerifyPrompt, runVerifier } from "./verifier.ts";
+import { PHASE2_TEST_OBJECTIVE, runChain, type ChainDeps } from "./roles.ts";
 
 /** The exact names for this extension's commands. */
 const STATUS_COMMAND = "cowork";
 const CONTRACT_COMMAND = "cowork-contract";
 const VERIFY_COMMAND = "cowork-verify";
+const CHAIN_COMMAND = "cowork-chain";
 
 /** ODD spec document this feature work is tracked against. */
 const SPEC_REF = "odd/tasks/gentle-cowork-extension.md";
 
 /** Overall timeout for one verifier spawn, in milliseconds. */
 const VERIFY_TIMEOUT_MS = 120_000;
+
+/**
+ * Overall timeout for one chain role turn, in milliseconds. Measured real
+ * cowork-implementer turn: ~339s (full spec read + scoped write + artifact
+ * JSON) — probe 2026-10-16; keep a comfortable margin above it.
+ */
+const CHAIN_TIMEOUT_MS = 600_000;
+
+/** Maximum implementer attempts per step after CHANGES verdicts (ROADMAP). */
+const MAX_CHAIN_RETRIES = 3;
 
 /** Delegation tool name patterns the tool_call hook watches for. */
 const DELEGATION_PATTERNS = ["delegate", "subagent", "agent"];
@@ -122,14 +130,17 @@ function notify(
 
 /** Extension dependencies; every transport is injectable for tests. */
 export interface CoworkDeps {
-  connectVerifier?: (options: VerifierSpawnOptions) => VerifierRpc;
+  connectVerifier?: (options: SubagentSpawnOptions) => SubagentRpc;
+  connectSubagent?: (options: SubagentSpawnOptions) => SubagentRpc;
 }
 
 export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps = {}): void {
-  const connectVerifier = deps.connectVerifier ?? createRpcVerifier;
+  const connectVerifier = deps.connectVerifier ?? createRpcSubagent;
+  const connectSubagent = deps.connectSubagent ?? createRpcSubagent;
 
   let contractCounter = 0;
   let verifyCounter = 0;
+  let chainCounter = 0;
   let lastContract: TaskContract | undefined;
 
   pi.registerCommand(STATUS_COMMAND, {
@@ -200,6 +211,66 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[gentle-cowork] cowork-verifier failed for ${contractId}: ${message}`);
         notify(ctx, `${PREFIX} Verification failed: ${message}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand(CHAIN_COMMAND, {
+    description: "Phase 2: run the full planner → implementer → verifier chain with a test objective",
+    handler: async (_args: string, ctx) => {
+      const contractId = `ch-${++chainCounter}`;
+      notify(
+        ctx,
+        `${PREFIX} Running Phase 2 chain: planner → implementer → verifier. Objective: ${PHASE2_TEST_OBJECTIVE}`,
+      );
+      try {
+        const chainDeps: ChainDeps = {
+          connect: connectSubagent,
+          spawnOptions: {
+            cwd: ctx.cwd,
+            provider: ctx.model?.provider,
+            model: ctx.model?.id,
+          },
+          timeoutMs: CHAIN_TIMEOUT_MS,
+          maxRetries: MAX_CHAIN_RETRIES,
+        };
+        const result = await runChain(PHASE2_TEST_OBJECTIVE, SPEC_REF, chainDeps, (line) => {
+          notify(ctx, `${PREFIX} ${line}`);
+          // Progress also goes to the launcher log so headless runs are diagnosable.
+          console.error(`[gentle-cowork] chain progress: ${line}`);
+        });
+
+        // Log the chain result to the launcher log (stderr).
+        console.error(`[gentle-cowork] chain result for ${contractId}: ${result.status}`);
+        console.error(JSON.stringify(result, null, 2));
+
+        const completed = result.steps.filter((s) => s.status === "completed").length;
+        lastContract = {
+          ...buildContract(
+            contractId,
+            PHASE2_TEST_OBJECTIVE,
+            "planner",
+            result.plan.flatMap((step) => step.scope),
+            [`all steps completed`],
+            SPEC_REF,
+          ),
+          artifacts: [JSON.stringify(result)],
+          status: result.status === "completed" ? "completed" : "failed",
+        };
+
+        if (result.status === "completed") {
+          notify(ctx, `${PREFIX} Chain completed: ${completed}/${result.steps.length} steps`);
+        } else {
+          notify(
+            ctx,
+            `${PREFIX} Chain failed: ${completed}/${result.steps.length} steps — see the launcher log for the last CHANGES verdict`,
+            "error",
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[gentle-cowork] chain failed for ${contractId}: ${message}`);
+        notify(ctx, `${PREFIX} Chain failed: ${message}`, "error");
       }
     },
   });

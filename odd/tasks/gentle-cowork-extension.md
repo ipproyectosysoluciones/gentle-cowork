@@ -1,0 +1,26 @@
+# gentle-cowork extension — ODD feature document
+
+Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delegation by named reason (never size), spec passed by reference, flat delegation tree. Long-term roadmap source of truth: `ROADMAP.md` (Phases 0-5). Full proposal: Obsidian vault `belzebuth`, folder `01-Proyectos/Gentle-CoWork` (3 notes). Phase 0 (skeleton) is complete at commit `ae22195`.
+
+## Specs
+
+- **S1 — Re-align the skeleton with the real Pi ExtensionAPI.** User confirmation: "Sí, arrancá" (option description: "Re-alineo el esqueleto con la API real de ExtensionAPI y arranco Phase 1 (verificador único)"). The current skeleton (`src/gentle-cowork.ts`, commit `ae22195`) uses `api: any` with an invented API surface; it must register against the real Pi 1.2.0 `ExtensionAPI` (`pi.registerCommand(name, opts)`, `pi.on(event, handler)`), be typed without `any` (workspace TS playbook prohibition), and be verified via typecheck + unit tests of registration + extension load.
+- **S2 — Phase 1: Single-role verification.** Verbatim from `ROADMAP.md`: "Spawn a `cowork-verifier` subagent (`pi --mode rpc`) with a test prompt"; "Receive the verifier's verdict (APPROVE/CHANGES)"; "Log the verdict to the launcher log". Exit criteria: "A verifier subagent runs, reads a test file, and returns a structured verdict."
+- **S3 — Phase 2: Planner → Implementer → Verifier chain.** Verbatim from `ROADMAP.md`: "`cowork-planner` receives an objective, returns a plan (list of steps with scope + criteria)"; "`cowork-implementer` receives one step, executes it, returns an artifact summary"; "`cowork-verifier` receives the artifact, runs tests, returns a per-S# verdict"; "If verdict is `CHANGES`, loop back to implementer (max 3 retries)". Exit criteria: "A complete plan → implement → verify cycle runs without manual intervention."
+- **S4 — Phase 3: ODD integration (invisible delegation).** Verbatim from `ROADMAP.md`: "Hook into `tool_call` — detect when gentle-shell is about to delegate (tool names containing \"delegate\" or \"subagent\")"; "When detected and a named reason exists → apply role orchestration instead of native delegation"; "When no reason exists → let native delegation proceed (do NOT intercept)"; "The user should never need to invoke `/cowork` explicitly". Exit criteria: "Delegation happens naturally; the user describes what they need and the orchestration is invisible."
+- **S5 — Phase 4: Blackboard state.** Verbatim from `ROADMAP.md`: "A shared state file (JSON) that all roles read/write"; "TaskContract persistence (pending → in_progress → completed/failed)"; "Survives daemon restart (state file on disk)". Exit criteria: "A delegation can be interrupted and resumed without losing the contract state."
+- **S6 — Phase 5: Multi-node scaling (future).** Verbatim from `ROADMAP.md`: "Phase 5 — Multi-node scaling (future)". Out of current scope; to be started only by an explicit user decision once Phases 1-4 are complete.
+
+## Tasks
+
+- T1 · S1 · inline · commit: — Re-align `src/gentle-cowork.ts` with the real `ExtensionAPI` (typed, no `any`); registration unit tests (RED with current skeleton → GREEN after re-alignment); typecheck and load verified.
+- T2 · S2 · inline · commit: — Phase 1: spawn a `cowork-verifier` subagent with a test prompt, receive structured APPROVE/CHANGES verdict, log the verdict.
+- T3 · S3 · route TBD · commit: — Phase 2: full planner → implementer → verifier chain with CHANGES retry loop (max 3).
+- T4 · S4 · route TBD · commit: — Phase 3: `tool_call` hook — invisible delegation, role orchestration only when a named reason exists; native delegation otherwise untouched.
+- T5 · S5 · route TBD · commit: — Phase 4: shared blackboard state file (JSON) with TaskContract persistence surviving restarts.
+
+## Log
+
+- L1 (2026-10-15, original request verbatim): "Vamos a comenzar con el proyecto gentle-cowork, como aún no es una extensión oficial ni de Pi, ni de gentle-shell vamos a crear una branch alterna en el momento de integrarla a gentle-shell para no hacer ruido con la versión estable de gentle-shell, leer bien el  agente, readme y documentación, tambien adjunto la propuesta del proyecto la cual se encuentra en obsidian carpeta 01-Proyectos/Gentle-CoWork, cuando tengas todo claro me informas para comenzar el desarrollo"
+- L2 (2026-10-15, confirmation): user selected "Sí, arrancá" — "Re-alineo el esqueleto con la API real de ExtensionAPI y arranco Phase 1 (verificador único)". Full phase plan approved; Phases 2-4 are tackled sequentially as each prior phase closes; Phase 5 is future scope (S6). Work-unit commits on a feature branch are part of this flow; push/PR/merge remain user decisions.
+- L3 (2026-10-15, exploration evidence): Phase 0 skeleton (`api: any` + optional chaining) is dead code against the real Pi 1.2.0 ExtensionAPI — loads without errors but registers nothing functional. Real API verified in `docs/extensions.md` of `@earendil-works/pi-coding-agent`: `pi.registerCommand(name, { description, handler })`, `pi.on("tool_call", (event, ctx))` with `{ block, reason }` or input mutation, `ctx.executeTool(name, args, { signal, onUpdate })`, `pi.appendEntry()` for durable state. Workspace TS playbook: strict mode, never `any`. Recorded in Engram (ids 2336/2337).

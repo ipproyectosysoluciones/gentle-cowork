@@ -28,6 +28,12 @@ export interface SubagentRpc {
   getLastAssistantText(): Promise<string | null>;
   /** Stop the RPC child process. Always called by runSubagentTurn. */
   stop(): Promise<void>;
+  /**
+   * Cheap state poll used as the readiness handshake (BLA-26). Optional:
+   * transports that cannot poll state rely on the client's own send-timeout
+   * window for the first prompt.
+   */
+  getState?(): Promise<unknown>;
 }
 
 /** Thrown when a subagent's response cannot be parsed into its contract. */
@@ -157,8 +163,34 @@ export function createRpcSubagent(options: SubagentSpawnOptions = {}): SubagentR
     start: () => client.start(),
     promptAndWait: (message, timeoutMs) => client.promptAndWait(message, undefined, timeoutMs),
     getLastAssistantText: () => client.getLastAssistantText(),
+    getState: () => client.getState(),
     stop: () => client.stop(),
   };
+}
+
+/** Readiness handshake budget (BLA-26): attempts before giving up. */
+const READINESS_ATTEMPTS = 4;
+
+/**
+ * BLA-26 — waits for a fresh child to finish booting before the first
+ * prompt. A pi child loads the whole agent home (every extension) and can
+ * take ~17s+ to become ready; the RpcClient's per-request timeout is a
+ * fixed 30s, so a prompt sent during boot can lose the race and abort the
+ * whole turn. A failed get_state poll just means "not ready yet".
+ */
+async function waitUntilReady(rpc: SubagentRpc): Promise<void> {
+  if (!rpc.getState) return;
+  for (let attempt = 1; attempt <= READINESS_ATTEMPTS; attempt++) {
+    try {
+      await rpc.getState();
+      return;
+    } catch {
+      // Still booting — the send-timeout of the poll is the wait itself.
+    }
+  }
+  throw new Error(
+    `gentle-cowork: the subagent child did not become ready after ${READINESS_ATTEMPTS} handshake attempts`,
+  );
 }
 
 /**
@@ -175,6 +207,7 @@ export async function runSubagentTurn(
   let raw: string | null;
   await rpc.start();
   try {
+    await waitUntilReady(rpc);
     await rpc.promptAndWait(prompt, timeoutMs);
     raw = await rpc.getLastAssistantText();
   } finally {

@@ -5,11 +5,11 @@
  * never by size. Passes the spec by reference, never paraphrased.
  * The intelligence stays agent-side — this extension only routes and records.
  *
- * Phase 0 scope (this file): registers the /cowork status commands and
- * watches tool_call for delegation triggers, building lightweight
- * TaskContracts. Role spawning (planner → implementer → verifier) arrives
- * with the later ROADMAP phases; until then the contracts are read-only
- * orchestration state surfaced through /cowork and /cowork-contract.
+ * Phase 0 scope: registers the /cowork status commands and watches
+ * tool_call for delegation triggers, building lightweight TaskContracts.
+ * Phase 1 scope: /cowork-verify spawns a cowork-verifier subagent
+ * (pi --mode rpc) with a test prompt, parses its structured verdict,
+ * and logs it to the launcher log (stderr).
  */
 
 import type {
@@ -20,10 +20,25 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { TaskContract } from "./types.ts";
+import {
+  PHASE1_TEST_REQUIREMENTS,
+  buildVerifyPrompt,
+  createRpcVerifier,
+  runVerifier,
+  type VerifierRpc,
+  type VerifierSpawnOptions,
+} from "./verifier.ts";
 
 /** The exact names for this extension's commands. */
 const STATUS_COMMAND = "cowork";
 const CONTRACT_COMMAND = "cowork-contract";
+const VERIFY_COMMAND = "cowork-verify";
+
+/** ODD spec document this feature work is tracked against. */
+const SPEC_REF = "odd/tasks/gentle-cowork-extension.md";
+
+/** Overall timeout for one verifier spawn, in milliseconds. */
+const VERIFY_TIMEOUT_MS = 120_000;
 
 /** Delegation tool name patterns the tool_call hook watches for. */
 const DELEGATION_PATTERNS = ["delegate", "subagent", "agent"];
@@ -96,13 +111,25 @@ function buildContract(
   };
 }
 
-/** Notifies a single-line message through ctx.ui (info level). */
-function notify(ctx: ExtensionCommandContext, message: string): void {
-  ctx.ui.notify(message, "info");
+/** Notifies a message through ctx.ui with an optional level (default info). */
+function notify(
+  ctx: ExtensionCommandContext,
+  message: string,
+  type?: "info" | "warning" | "error",
+): void {
+  ctx.ui.notify(message, type ?? "info");
 }
 
-export default function gentleCoworkExtension(pi: ExtensionAPI): void {
+/** Extension dependencies; every transport is injectable for tests. */
+export interface CoworkDeps {
+  connectVerifier?: (options: VerifierSpawnOptions) => VerifierRpc;
+}
+
+export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps = {}): void {
+  const connectVerifier = deps.connectVerifier ?? createRpcVerifier;
+
   let contractCounter = 0;
+  let verifyCounter = 0;
   let lastContract: TaskContract | undefined;
 
   pi.registerCommand(STATUS_COMMAND, {
@@ -127,6 +154,53 @@ export default function gentleCoworkExtension(pi: ExtensionAPI): void {
         return;
       }
       notify(ctx, JSON.stringify(lastContract, null, 2));
+    },
+  });
+
+  pi.registerCommand(VERIFY_COMMAND, {
+    description:
+      "Phase 1: spawn a cowork-verifier subagent (pi --mode rpc) with a test prompt and log its verdict",
+    handler: async (_args: string, ctx) => {
+      const contractId = `vc-${++verifyCounter}`;
+      notify(
+        ctx,
+        `${PREFIX} Spawning cowork-verifier via pi --mode rpc (Phase 1 test, ${PHASE1_TEST_REQUIREMENTS.length} requirements)...`,
+      );
+      try {
+        const prompt = buildVerifyPrompt(contractId, SPEC_REF, PHASE1_TEST_REQUIREMENTS);
+        const rpc = connectVerifier({
+          cwd: ctx.cwd,
+          provider: ctx.model?.provider,
+          model: ctx.model?.id,
+        });
+        const verdict = await runVerifier({ prompt, contractId, rpc, timeoutMs: VERIFY_TIMEOUT_MS });
+
+        // Log the verdict to the launcher log (stderr) per ROADMAP Phase 1.
+        console.error(`[gentle-cowork] cowork-verifier verdict for ${contractId}: ${verdict.outcome}`);
+        console.error(JSON.stringify(verdict, null, 2));
+
+        // The verification task itself completed; the verdict is its artifact.
+        lastContract = {
+          ...buildContract(
+            contractId,
+            "Phase 1 verification test",
+            "verifier",
+            [],
+            ["verdict received"],
+            SPEC_REF,
+          ),
+          artifacts: [JSON.stringify(verdict)],
+          status: "completed",
+        };
+
+        const summary = verdict.requirements.map((r) => `${r.id}:${r.verdict}`).join(", ");
+        notify(ctx, `${PREFIX} Verifier verdict: ${verdict.outcome} — ${summary}`);
+        notify(ctx, verdict.report);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[gentle-cowork] cowork-verifier failed for ${contractId}: ${message}`);
+        notify(ctx, `${PREFIX} Verification failed: ${message}`, "error");
+      }
     },
   });
 

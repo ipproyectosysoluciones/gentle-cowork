@@ -46,7 +46,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "[DOGFOOD] Creating shared directory..."
-SHARED_DIR="$(mktemp -d -t gentle-cowork-dogfood-XXXXXX)"
+SHARED_DIR="/tmp/gentle-cowork-dogfood"
+mkdir -p "${SHARED_DIR}"
 export DOG_FOOD_SHARED_DIR="${SHARED_DIR}"
 echo "[DOGFOOD] Shared directory: ${SHARED_DIR}"
 

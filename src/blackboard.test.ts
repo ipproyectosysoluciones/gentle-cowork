@@ -800,6 +800,191 @@ describe("blackboard — Phase 5: merge contracts (version counter)", () => {
   });
 });
 
+// T5.2 — Additional merge logic edge cases (property-based style)
+describe("blackboard — Phase 5: merge logic edge cases (T5.2)", () => {
+  it("mergeContracts handles multiple incoming contracts in batch", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.acquireLease("master-1");
+      board.putContract(makeContract({ id: "gc-1", version: 1, status: "pending" }));
+      board.putContract(makeContract({ id: "gc-2", version: 1, status: "pending" }));
+
+      const incoming = [
+        makeContract({ id: "gc-1", version: 2, status: "in_progress" }),
+        makeContract({ id: "gc-2", version: 2, status: "in_progress" }),
+        makeContract({ id: "gc-3", version: 1, status: "pending" }),
+      ];
+      const merged = board.mergeContracts(incoming);
+      expect(merged).toBe(3);
+      expect(board.getContract("gc-1")?.version).toBe(2);
+      expect(board.getContract("gc-2")?.version).toBe(2);
+      expect(board.getContract("gc-3")?.version).toBe(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("mergeContracts preserves history when adopting incoming contract", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.acquireLease("master-1");
+      const existing = makeContract({
+        id: "gc-1",
+        version: 1,
+        status: "pending",
+        history: [
+          { status: "pending", version: 1, nodeId: "a", timestamp: "2024-01-01T00:00:00.000Z" },
+        ],
+      });
+      board.putContract(existing);
+
+      const incoming = makeContract({
+        id: "gc-1",
+        version: 3,
+        status: "completed",
+        history: [
+          { status: "pending", version: 1, nodeId: "b", timestamp: "2024-01-01T00:00:00.000Z" },
+          { status: "in_progress", version: 2, nodeId: "b", timestamp: "2024-01-01T01:00:00.000Z" },
+          { status: "completed", version: 3, nodeId: "b", timestamp: "2024-01-01T02:00:00.000Z" },
+        ],
+      });
+      board.mergeContracts([incoming]);
+
+      const merged = board.getContract("gc-1")!;
+      expect(merged.version).toBe(3);
+      expect(merged.history).toHaveLength(3);
+      expect(merged.history[2].status).toBe("completed");
+      // History should be from incoming (adopted wholesale)
+      expect(merged.history[0].nodeId).toBe("b");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("mergeContracts with higher version wins regardless of status (current behavior)", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.acquireLease("master-1");
+      // Existing is already completed (terminal)
+      const existing = makeContract({ id: "gc-1", version: 3, status: "completed" });
+      board.putContract(existing);
+
+      // Incoming has higher version but tries to go back to in_progress
+      // Current implementation: higher version wins regardless of status transition validity
+      const incoming = makeContract({ id: "gc-1", version: 4, status: "in_progress" });
+      const merged = board.mergeContracts([incoming]);
+      expect(merged).toBe(1); // Higher version wins
+      expect(board.getContract("gc-1")?.status).toBe("in_progress");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("mergeContracts with equal version and equal status priority keeps existing", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.acquireLease("master-1");
+      const existing = makeContract({ id: "gc-1", version: 2, status: "completed" });
+      board.putContract(existing);
+
+      const incoming = makeContract({ id: "gc-1", version: 2, status: "completed" });
+      const merged = board.mergeContracts([incoming]);
+      expect(merged).toBe(0); // No change, same version and status
+      expect(board.getContract("gc-1")?.version).toBe(2);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("mergeContracts handles concurrent completed vs failed at same version", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.acquireLease("master-1");
+      const existing = makeContract({ id: "gc-1", version: 3, status: "completed" });
+      board.putContract(existing);
+
+      const incoming = makeContract({ id: "gc-1", version: 3, status: "failed" });
+      const merged = board.mergeContracts([incoming]);
+      // completed has higher priority than failed
+      expect(merged).toBe(0);
+      expect(board.getContract("gc-1")?.status).toBe("completed");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("mergeContracts with empty incoming array returns 0", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.acquireLease("master-1");
+      board.putContract(makeContract({ id: "gc-1", version: 1 }));
+
+      const merged = board.mergeContracts([]);
+      expect(merged).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("mergeContracts does not mutate incoming contracts", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.acquireLease("master-1");
+      const existing = makeContract({ id: "gc-1", version: 1, status: "pending" });
+      board.putContract(existing);
+
+      const incoming = makeContract({ id: "gc-1", version: 3, status: "completed" });
+      const incomingCopy = JSON.parse(JSON.stringify(incoming));
+      board.mergeContracts([incoming]);
+      // Incoming should be unchanged
+      expect(incoming).toEqual(incomingCopy);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("mergeContracts with contracts missing version field (legacy) works", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board1 = openBlackboard(defaultBlackboardPath(tmp));
+      board1.acquireLease("master-1");
+      // Simulate legacy contract without version (will be normalized to v1)
+      const legacy = {
+        id: "gc-1",
+        objective: "Legacy",
+        role: "planner" as const,
+        scope: ["src/"],
+        acceptanceCriteria: ["works"],
+        specRef: "spec.md",
+        artifacts: [],
+        status: "completed" as const,
+      };
+      const filePath = defaultBlackboardPath(tmp);
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeRawState(filePath, JSON.stringify({ version: 1, contracts: [legacy], nodes: [], lastFence: 0 }));
+
+      const board2 = openBlackboard(filePath);
+      // Normalized to version 1
+      expect(board2.getContract("gc-1")?.version).toBe(1);
+
+      // Incoming with explicit higher version should win
+      const incoming = makeContract({ id: "gc-1", version: 2, status: "failed" });
+      const merged = board2.mergeContracts([incoming]);
+      expect(merged).toBe(1);
+      expect(board2.getContract("gc-1")?.version).toBe(2);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("blackboard — Phase 5: lock + concurrent write safety", () => {
   it("acquires and releases write lock around putContract", () => {
     const tmp = makeTmpDir();

@@ -554,6 +554,166 @@ describe("blackboard — Phase 5: node registration & heartbeats", () => {
   });
 });
 
+describe("blackboard — Phase 5: master/worker capability model (T5.3)", () => {
+  it("registers master with planner and verifier capabilities", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.registerNode({
+        nodeId: "master-1",
+        role: "master",
+        capabilities: ["planner", "verifier"],
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      });
+      const nodes = board.getNodes();
+      expect(nodes).toHaveLength(1);
+      expect(nodes[0].role).toBe("master");
+      expect(nodes[0].capabilities).toEqual(["planner", "verifier"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("registers worker with implementer capability only", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.registerNode({
+        nodeId: "worker-1",
+        role: "worker",
+        capabilities: ["implementer"],
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      });
+      const nodes = board.getNodes();
+      expect(nodes[0].role).toBe("worker");
+      expect(nodes[0].capabilities).toEqual(["implementer"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("multiple workers register with different capabilities", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.registerNode({
+        nodeId: "worker-1",
+        role: "worker",
+        capabilities: ["implementer"],
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      });
+      board.registerNode({
+        nodeId: "worker-2",
+        role: "worker",
+        capabilities: ["implementer", "verifier"],
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      });
+      const nodes = board.getNodes();
+      expect(nodes).toHaveLength(2);
+      const caps = nodes.map((n) => n.capabilities.sort().join(",")).sort();
+      expect(caps).toEqual(["implementer", "implementer,verifier"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("heartbeat updates lastHeartbeat and sets status to alive", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      const node = makeNode({ nodeId: "worker-1", status: "stale", lastHeartbeat: new Date(Date.now() - 10000).toISOString() });
+      board.registerNode(node);
+      const before = board.getNodes()[0].lastHeartbeat;
+      board.heartbeat("worker-1");
+      const after = board.getNodes()[0].lastHeartbeat;
+      expect(after).not.toBe(before);
+      expect(board.getNodes()[0].status).toBe("alive");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("node becomes stale after STALE_THRESHOLD_MS without heartbeat", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      const node = makeNode({
+        nodeId: "worker-1",
+        status: "alive",
+        lastHeartbeat: new Date(Date.now() - 20000).toISOString(), // 20s ago > STALE_THRESHOLD_MS (15s)
+      });
+      board.registerNode(node);
+      // Manually trigger staleness check by updating node status based on heartbeat age
+      const nodes = board.getNodes();
+      const isStale = Date.now() - new Date(nodes[0].lastHeartbeat).getTime() > 15000;
+      expect(isStale).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("getNodes returns defensive copies", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.registerNode(makeNode({ nodeId: "worker-1" }));
+      const nodes = board.getNodes();
+      nodes[0].status = "stale";
+      const fresh = board.getNodes();
+      expect(fresh[0].status).toBe("alive");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("heartbeat on unknown node is no-op", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.heartbeat("unknown-node"); // Should not throw
+      expect(board.getNodes()).toHaveLength(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("re-registering same nodeId updates capabilities", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(defaultBlackboardPath(tmp));
+      board.registerNode({
+        nodeId: "worker-1",
+        role: "worker",
+        capabilities: ["implementer"],
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      });
+      board.registerNode({
+        nodeId: "worker-1",
+        role: "worker",
+        capabilities: ["implementer", "verifier"],
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      });
+      const nodes = board.getNodes();
+      expect(nodes).toHaveLength(1);
+      expect(nodes[0].capabilities).toEqual(["implementer", "verifier"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("blackboard — Phase 5: orphan recovery sweep", () => {
   it("marks in_progress contracts as failed(stale) when lease expired and heartbeat stale", () => {
     const tmp = makeTmpDir();

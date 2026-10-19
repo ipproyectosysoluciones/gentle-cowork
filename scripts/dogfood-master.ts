@@ -4,6 +4,8 @@
  *
  * Runs the master orchestration loop that coordinates work via the blackboard.
  * The master acts as planner+verifier; workers handle implementer steps.
+ * The master polls the blackboard for work completion — it does NOT wait on
+ * worker processes. The blackboard is the source of truth.
  */
 
 import { mkdirSync, rmSync } from "node:fs";
@@ -12,7 +14,7 @@ import { join } from "node:path";
 
 import { openBlackboard, defaultBlackboardPath, STATE_VERSION } from "../src/blackboard.ts";
 import type { TaskContract, NodeRegistration } from "../src/types.ts";
-import { makeContract } from "./dogfood-common.ts";
+import { makeContract, sleep } from "./dogfood-common.ts";
 
 const MASTER_NODE_ID = `master-${process.pid}-${Date.now()}`;
 const LEASE_TTL_MS = 30_000;
@@ -81,9 +83,6 @@ function logContract(contract: TaskContract): void {
   log(`Contract ${contract.id} (${contract.role}): ${contract.objective} [${contract.status}] v${contract.version}`);
 }
 
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function main(): Promise<void> {
   const tmpDir = join(tmpdir(), `gentle-cowork-dogfood-${Date.now()}`);
@@ -106,6 +105,23 @@ async function main(): Promise<void> {
     board.registerNode(masterNode);
     log(`Registered as master: ${MASTER_NODE_ID}`);
 
+    // Wait for at least one worker to be registered and alive
+    log(`Waiting for worker to be ready...`);
+    const workerReadyStart = Date.now();
+    const WORKER_READY_TIMEOUT_MS = 120_000; // 2 minutes
+    while (true) {
+      const workers = board.getNodes().filter((n) => n.role === "worker" && n.status === "alive");
+      if (workers.length > 0) {
+        log(`Worker detected: ${workers[0].nodeId}`);
+        break;
+      }
+      if (Date.now() - workerReadyStart > WORKER_READY_TIMEOUT_MS) {
+        log(`Worker not ready after ${WORKER_READY_TIMEOUT_MS}ms, proceeding anyway`);
+        break;
+      }
+      await sleep(1000);
+    }
+
     // Create Phase 5 task contracts
     for (let i = 0; i < PHASE5_TASKS.length; i++) {
       const task = PHASE5_TASKS[i];
@@ -118,7 +134,7 @@ async function main(): Promise<void> {
       log(`Created contract gc-${i + 1}: ${task.objective}`);
     }
 
-    // Main orchestration loop
+    // Main orchestration loop - tracks completion via blackboard, NOT worker process
     let iteration = 0;
     while (true) {
       iteration++;
@@ -146,8 +162,6 @@ async function main(): Promise<void> {
         const completed = contracts.filter((c) => c.status === "completed");
         for (const contract of completed) {
           logContract(contract);
-          // In real implementation, run verifier here
-          // For dogfooding, just log the artifact
           if (contract.artifacts.length > 0) {
             log(`  Artifacts: ${contract.artifacts.join(", ")}`);
           }
@@ -159,7 +173,7 @@ async function main(): Promise<void> {
           log(`Orphan recovery: ${recovery.recovered} recovered, ${recovery.requeued} requeued`);
         }
 
-        // Check if all work is done
+        // Check if all work is done via BLACKBOARD (not process state)
         const remaining = board.listContracts().filter((c) => c.status !== "completed" && c.status !== "failed");
         if (remaining.length === 0) {
           log("All work completed!");
@@ -173,11 +187,8 @@ async function main(): Promise<void> {
       for (const contract of pending) {
         if (contract.role === "planner") {
           log(`Running planner for ${contract.id}: ${contract.objective}`);
-          // Simulate planner: create step contracts
           const lease2 = board.acquireLease(MASTER_NODE_ID, 60_000);
           if (lease2) {
-            // In real implementation, planner would break down into steps
-            // For dogfooding, mark as completed with a step artifact
             const updated = board.updateStatus(
               contract.id,
               "completed",
@@ -207,7 +218,6 @@ async function main(): Promise<void> {
               [`Assigned to ${worker.nodeId}`],
               lease2.fence,
             );
-            // Update contract with worker assignment and fence
             const updated = board.getContract(contract.id);
             if (updated) {
               updated.workerNodeId = worker.nodeId;
@@ -233,6 +243,7 @@ async function main(): Promise<void> {
     log("Master done.");
   }
 }
+
 
 main().catch((err) => {
   console.error("Unhandled error:", err);

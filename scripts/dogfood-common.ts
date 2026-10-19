@@ -47,3 +47,7 @@ export function makeContract(overrides: Partial<TaskContract> = {}): TaskContrac
 export function log(message: string, prefix = "DOGFOOD"): void {
   console.error(`[${new Date().toISOString()}] [${prefix}] ${message}`);
 }
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

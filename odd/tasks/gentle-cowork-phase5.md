@@ -206,7 +206,7 @@ type WSMessage =
 | T5.3 | S1 | inline | Node registration + heartbeat in blackboard; master/worker capability model | ✅ DONE |
 | T5.4 | S1, S4 | inline | Local two-session dogfooding harness (scripts to spawn master+worker) | ✅ DONE |
 | T5.5 | S1, S4 | inline | Dogfood Phase 5: use the harness to build T5.1–T5.4 (meta) | ✅ DONE |
-| T5.6 | S2 | inline | WebSocket transport skeleton (reuse daemon WS framing); TLS config | ⏳ PENDING |
+| T5.6 | S2 | inline | WebSocket transport skeleton (reuse daemon WS framing); TLS config | ✅ DONE |
 | T5.7 | S3 | inline | Zero-Trust: mTLS certs, allowlist, per-role permissions | ⏳ PENDING |
 | T5.8 | S2, S4 | inline | Network two-node test (local → VPS simulation via Docker/network namespace) | ⏳ PENDING |
 | T5.9 | S4 | inline | Horizontal scaling: dynamic worker registration, load-aware step routing | ⏳ PENDING |
@@ -220,5 +220,6 @@ type WSMessage =
 - L10 (2026-10-19, design amendments): Added fencing tokens on lease (monotonic, increments on renew; writes rejected if fence < current); orphan recovery sweep (master-only, detects in_progress with expired lease + stale heartbeat → failed(stale) + re-queue, max 3 retries); conflict resolution by version counter under lock (timestamps display-only); verifier co-located ONLY on master; Stage 3 lock authority migrates to master WS (flock is same-machine only).
 - L11 (2026-10-19, implementation status): T5.1-T5.4 ✅ DONE (120 tests passing, typecheck clean). T5.5 🔄 IN PROGRESS — harness works for trivial task (hello.txt verified end-to-end) but has bugs for full T5.1-T5.4 cycle: (1) master worker-ready timeout triggers immediately (timing logic bug), (2) worker crashes after master detection (unhandled exception), (3) NO_WORK_TIMEOUT_MS too short. Next: fix harness bugs, re-run dogfooding for T5.1-T5.4.
 - L12 (2026-10-19, T5.5 COMPLETED): Dogfood cycle verified end-to-end — Master siembra 4 contratos (gc-1..gc-4) → Worker ejecuta secuencialmente → Master detecta completed via refresh → "All work completed!". Race condition en `acquireWriteLock` (lock file no usa fcntl/flock real) causa crash ocasional worker al persistir simultáneo con master; bug documentado en T5.1, no bloquea ciclo (master detectó completed). Suite 120/120, typecheck clean. Commit 0984745.
+- L13 (2026-10-19, T5.6 COMPLETED): WS Transport Skeleton implemented — Port 4318 (configurable, NOT 4317), binding 127.0.0.1, TLS deferred to remote slice. Protocol: RegisterWorker, AssignStep, StepResult, Heartbeat, LeaseRequest/Grant/Release. Lease grantor exclusivity tested (serialized grants, incremented fence on re-grant). Reconnect re-register without duplicates. 8 tests passing, 128 total suite, typecheck clean. Commit be852c6.
 
 ---

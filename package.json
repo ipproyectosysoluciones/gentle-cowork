@@ -6,7 +6,10 @@
   "main": "src/gentle-cowork.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dogfood:worker": "tsx scripts/dogfood-worker.ts",
+    "dogfood:master": "tsx scripts/dogfood-master.ts",
+    "dogfood:run": "bash scripts/run-dogfood.sh --timeout 180"
   },
   "keywords": [
     "pi",

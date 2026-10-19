@@ -264,9 +264,10 @@ describe("gentle-cowork /cowork-chain (Phase 2)", () => {
 describe("gentle-cowork blackboard persistence (Phase 4)", () => {
   type SessionStartHandler = (event: SessionStartEvent, ctx: ExtensionContext) => Promise<void> | void;
 
-  /** A well-formed TaskContract as it appears on the blackboard. */
+  /** A well-formed TaskContract as it appears on the blackboard (new format, for seeding). */
   function persistedContract(overrides: Partial<TaskContract> = {}): TaskContract {
-    return {
+    const status = overrides.status ?? "in_progress";
+    const base: TaskContract = {
       id: "gc-7",
       objective: "Interrupted delegation",
       role: "planner",
@@ -274,9 +275,19 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
       acceptanceCriteria: ["all widget tests pass"],
       specRef: "odd/tasks/gentle-cowork-extension.md",
       artifacts: [],
-      status: "in_progress",
+      status,
+      version: 1,
+      history: [{
+        status,
+        version: 1,
+        nodeId: "legacy",
+        timestamp: new Date().toISOString(),
+      }],
+      leaseFence: undefined,
+      retryCount: 0,
       ...overrides,
     };
+    return base;
   }
 
   /** Fires the extension's session_start handler as Pi does on session load. */
@@ -301,7 +312,8 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
 
   /** Reads the persisted contracts straight from the state file on disk. */
   function readBoard(cwd: string): TaskContract[] {
-    const raw = JSON.parse(readFileSync(boardPath(cwd), "utf8")) as { contracts: TaskContract[] };
+    const raw = JSON.parse(readFileSync(boardPath(cwd), "utf8")) as { version: number; contracts: TaskContract[] };
+    expect(raw.version).toBe(2);
     return raw.contracts;
   }
 
@@ -389,8 +401,15 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
 
       // Mid-flight (chain parked on its first role turn): the interception
       // already persisted the new contract as in_progress, next id gc-4.
+      // Note: old is normalized by session_start, so it includes version/history/retryCount
+      const normalizedOld = {
+        ...old,
+        version: 1,
+        history: [{ status: "completed", version: 1, nodeId: "legacy", timestamp: expect.any(String) }],
+        retryCount: 0,
+      };
       expect(readBoard(tmp)).toEqual([
-        old,
+        normalizedOld,
         {
           id: "gc-4",
           objective: "Add the demo widget",
@@ -400,6 +419,9 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
           specRef: "odd/tasks/widget.md",
           artifacts: [],
           status: "in_progress",
+          version: 1,
+          history: [{ status: "pending", version: 1, nodeId: "extension", timestamp: expect.any(String) }],
+          retryCount: 0,
         },
       ]);
 

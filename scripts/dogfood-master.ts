@@ -20,6 +20,9 @@ const MASTER_NODE_ID = `master-${process.pid}-${Date.now()}`;
 const LEASE_TTL_MS = 30_000;
 const ORPHAN_SWEEP_INTERVAL_MS = 10_000;
 const LOOP_INTERVAL_MS = 1_000;
+const WORKER_READY_TIMEOUT_MS = 120_000; // 2 min
+const MASTER_TIMEOUT_NO_WORKER_MS = 600_000; // 10 min - exit if no workers appear
+const MASTER_GLOBAL_TIMEOUT_MS = 1800_000; // 30 min global timeout
 
 /** Phase 5 tasks to dogfood — the work this harness will build. */
 const PHASE5_TASKS: Omit<TaskContract, "id" | "version" | "history" | "leaseFence" | "retryCount" | "status" | "artifacts">[] = [
@@ -85,7 +88,9 @@ function logContract(contract: TaskContract): void {
 
 
 async function main(): Promise<void> {
-  const tmpDir = join(tmpdir(), `gentle-cowork-dogfood-${Date.now()}`);
+  // Use shared dir from env (for dogfooding), else default fixed path
+  const sharedDir = process.env.DOG_FOOD_SHARED_DIR;
+  const tmpDir = sharedDir ? sharedDir : "/tmp/gentle-cowork-dogfood";
   mkdirSync(tmpDir, { recursive: true });
   log(`Dogfood master starting in ${tmpDir}`);
 
@@ -108,16 +113,16 @@ async function main(): Promise<void> {
     // Wait for at least one worker to be registered and alive
     log(`Waiting for worker to be ready...`);
     const workerReadyStart = Date.now();
-    const WORKER_READY_TIMEOUT_MS = 120_000; // 2 minutes
     while (true) {
+      board.refresh(); // Refresh from disk to see worker
       const workers = board.getNodes().filter((n) => n.role === "worker" && n.status === "alive");
       if (workers.length > 0) {
         log(`Worker detected: ${workers[0].nodeId}`);
         break;
       }
       if (Date.now() - workerReadyStart > WORKER_READY_TIMEOUT_MS) {
-        log(`Worker not ready after ${WORKER_READY_TIMEOUT_MS}ms, proceeding anyway`);
-        break;
+        log(`Worker not ready after ${WORKER_READY_TIMEOUT_MS}ms (2 min), exiting`);
+        process.exit(1);
       }
       await sleep(1000);
     }
@@ -135,10 +140,26 @@ async function main(): Promise<void> {
     }
 
     // Main orchestration loop - tracks completion via blackboard, NOT worker process
+    const masterStartTime = Date.now();
     let iteration = 0;
+    let lastWorkerSeenTime = Date.now();
     while (true) {
       iteration++;
       log(`--- Iteration ${iteration} ---`);
+
+      // Global timeout check
+      if (Date.now() - masterStartTime > MASTER_GLOBAL_TIMEOUT_MS) {
+        log(`Global timeout reached (${MASTER_GLOBAL_TIMEOUT_MS}ms = 30 min), exiting`);
+        process.exit(1);
+      }
+      // No-worker timeout check
+      if (Date.now() - lastWorkerSeenTime > MASTER_TIMEOUT_NO_WORKER_MS) {
+        log(`No workers seen for ${MASTER_TIMEOUT_NO_WORKER_MS}ms (10 min), exiting`);
+        process.exit(1);
+      }
+
+      // Refresh from disk FIRST to see worker's completed contracts
+      board.refresh();
 
       const lease = board.acquireLease(MASTER_NODE_ID, LEASE_TTL_MS);
       if (!lease) {
@@ -202,13 +223,16 @@ async function main(): Promise<void> {
           }
         } else if (contract.role === "implementer") {
           log(`Assigning implementer for ${contract.id}: ${contract.objective}`);
-          // Assign to first available worker
+          // Assign to worker with most recent heartbeat (avoid stale workers from previous runs)
           const nodes = board.getNodes().filter((n) => n.role === "worker" && n.status === "alive");
           if (nodes.length === 0) {
             log("No workers available, will retry next iteration");
             continue;
           }
+          // Sort by lastHeartbeat descending (most recent first)
+          nodes.sort((a, b) => new Date(b.lastHeartbeat).getTime() - new Date(a.lastHeartbeat).getTime());
           const worker = nodes[0];
+          lastWorkerSeenTime = Date.now(); // Worker seen
           const lease2 = board.acquireLease(MASTER_NODE_ID, LEASE_TTL_MS);
           if (lease2) {
             board.updateStatus(
@@ -239,7 +263,10 @@ async function main(): Promise<void> {
     process.exit(1);
   } finally {
     log("Cleaning up...");
-    rmSync(tmpDir, { recursive: true, force: true });
+    // Only clean up temp dir we created, not shared dir
+    if (!sharedDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
     log("Master done.");
   }
 }

@@ -201,15 +201,15 @@ type WSMessage =
 
 | Task | Spec | Route | Notes |
 |------|------|-------|-------|
-| T5.1 | S1, S5 | inline | File locking + lease in `blackboard.ts`; unit tests for concurrent writers |
-| T5.2 | S5 | inline | Merge logic for TaskContracts; property-based tests for conflict scenarios |
-| T5.3 | S1 | inline | Node registration + heartbeat in blackboard; master/worker capability model |
-| T5.4 | S1, S4 | inline | Local two-session dogfooding harness (scripts to spawn master+worker) |
-| T5.5 | S1, S4 | inline | Dogfood Phase 5: use the harness to build T5.1–T5.4 (meta) |
-| T5.6 | S2 | inline | WebSocket transport skeleton (reuse daemon WS framing); TLS config |
-| T5.7 | S3 | inline | Zero-Trust: mTLS certs, allowlist, per-role permissions |
-| T5.8 | S2, S4 | inline | Network two-node test (local → VPS simulation via Docker/network namespace) |
-| T5.9 | S4 | inline | Horizontal scaling: dynamic worker registration, load-aware step routing |
+| T5.1 | S1, S5 | inline | File locking + lease in `blackboard.ts`; unit tests for concurrent writers | ✅ DONE |
+| T5.2 | S5 | inline | Merge logic for TaskContracts; property-based tests for conflict scenarios | ✅ DONE |
+| T5.3 | S1 | inline | Node registration + heartbeat in blackboard; master/worker capability model | ✅ DONE |
+| T5.4 | S1, S4 | inline | Local two-session dogfooding harness (scripts to spawn master+worker) | ✅ DONE |
+| T5.5 | S1, S4 | inline | Dogfood Phase 5: use the harness to build T5.1–T5.4 (meta) | 🔄 IN PROGRESS (harness bugs: master timeout bug + worker crashes) |
+| T5.6 | S2 | inline | WebSocket transport skeleton (reuse daemon WS framing); TLS config | ⏳ PENDING |
+| T5.7 | S3 | inline | Zero-Trust: mTLS certs, allowlist, per-role permissions | ⏳ PENDING |
+| T5.8 | S2, S4 | inline | Network two-node test (local → VPS simulation via Docker/network namespace) | ⏳ PENDING |
+| T5.9 | S4 | inline | Horizontal scaling: dynamic worker registration, load-aware step routing | ⏳ PENDING |
 
 ---
 
@@ -218,7 +218,6 @@ type WSMessage =
 - L8 (2026-10-19, release evidence): PR #34 merged (ea8e6b9, phase SHAs preserved) + release PR #35 → v1.0.0 tagged, GitHub Release + CHANGELOG (13 features, 10 fixes). BLA-25/26 closed. Suite 74/74 at merge.
 - L9 (2026-10-19, Phase 5 kickoff verbatim): "Arrancamos Phase 5 (multi-node) con dogfooding. ETAPA 1: diseño primero, sin código de red. [...] AL TERMINAR EL DISEÑO, DETENETE — mostrame el doc completo y esperá revisión antes de escribir una línea de implementación."
 - L10 (2026-10-19, design amendments): Added fencing tokens on lease (monotonic, increments on renew; writes rejected if fence < current); orphan recovery sweep (master-only, detects in_progress with expired lease + stale heartbeat → failed(stale) + re-queue, max 3 retries); conflict resolution by version counter under lock (timestamps display-only); verifier co-located ONLY on master; Stage 3 lock authority migrates to master WS (flock is same-machine only).
+- L11 (2026-10-19, implementation status): T5.1-T5.4 ✅ DONE (120 tests passing, typecheck clean). T5.5 🔄 IN PROGRESS — harness works for trivial task (hello.txt verified end-to-end) but has bugs for full T5.1-T5.4 cycle: (1) master worker-ready timeout triggers immediately (timing logic bug), (2) worker crashes after master detection (unhandled exception), (3) NO_WORK_TIMEOUT_MS too short. Next: fix harness bugs, re-run dogfooding for T5.1-T5.4.
 
 ---
-
-**Awaiting design review. No implementation code written yet.**

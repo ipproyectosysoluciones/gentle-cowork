@@ -54,6 +54,9 @@ export interface TaskContract {
   /** Fence token from the lease that was active when entering in_progress. */
   leaseFence?: number;
 
+  /** Worker this contract is assigned to (set by the master on assignment; T5.8). */
+  workerNodeId?: string;
+
   /** Retry count for orphan recovery re-queues (max 3). */
   retryCount?: number;
 }

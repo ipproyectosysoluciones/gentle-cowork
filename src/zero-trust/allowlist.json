@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "allowlist": {
+    "test-node-1": {
+      "nodeId": "test-node-1",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-planner-1": {
+      "nodeId": "test-planner-1",
+      "capabilities": ["planner"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-implementer-1": {
+      "nodeId": "test-implementer-1",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-planner-2": {
+      "nodeId": "test-planner-2",
+      "capabilities": ["planner"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-implementer-2": {
+      "nodeId": "test-implementer-2",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-verifier-1": {
+      "nodeId": "test-verifier-1",
+      "capabilities": ["verifier"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-planner-3": {
+      "nodeId": "test-planner-3",
+      "capabilities": ["planner"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-implementer-3": {
+      "nodeId": "test-implementer-3",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-verifier-2": {
+      "nodeId": "test-verifier-2",
+      "capabilities": ["verifier"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-worker-lease": {
+      "nodeId": "test-worker-lease",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-node-1": {
+      "nodeId": "test-node-1",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-planner-2": {
+      "nodeId": "test-planner-2",
+      "capabilities": ["planner"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-implementer-2": {
+      "nodeId": "test-implementer-2",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-verifier-1": {
+      "nodeId": "test-verifier-1",
+      "capabilities": ["verifier"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-planner-3": {
+      "nodeId": "test-planner-3",
+      "capabilities": ["planner"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-implementer-3": {
+      "nodeId": "test-implementer-3",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-verifier-2": {
+      "nodeId": "test-verifier-2",
+      "capabilities": ["verifier"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-worker-lease": {
+      "nodeId": "test-worker-lease",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "planner-worker": {
+      "nodeId": "planner-worker",
+      "capabilities": ["planner"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "implementer-worker": {
+      "nodeId": "implementer-worker",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-worker-1": {
+      "nodeId": "test-worker-1",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    },
+    "test-worker-1": {
+      "nodeId": "test-worker-1",
+      "capabilities": ["implementer"],
+      "addedAt": "2026-10-21T00:00:00.000Z"
+    }
+  }
+}

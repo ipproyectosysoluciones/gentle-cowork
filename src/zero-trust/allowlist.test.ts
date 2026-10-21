@@ -1,13 +1,13 @@
 /**
- * T5.7 Zero-Trust - Allowlist Attack Tests (RED phase)
+ * T5.7 Zero-Trust - Allowlist Attack Tests
  *
- * Tests that reject workers not in the allowlist.
+ * Rules under test:
+ * 1. A worker whose nodeId is not in the allowlist is rejected (error + close).
+ * 2. A connection that never registers is closed after the registration timeout.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import WebSocket from "ws";
-import { createServer } from "http";
-import { generateCertificate } from "./crypto";
 
 // Test utilities
 const WS_PORT = 4319; // Different port to avoid conflicts
@@ -24,7 +24,7 @@ function connectWS(options = {}): Promise<WebSocket> {
 	});
 }
 
-function sendMessage(ws: WebSocket, msg: any): Promise<void> {
+function sendMessage(ws: WebSocket, msg: unknown): Promise<void> {
 	return new Promise((resolve, reject) => {
 		if (ws.readyState !== WebSocket.OPEN) {
 			reject(new Error("WS not open"));
@@ -35,7 +35,7 @@ function sendMessage(ws: WebSocket, msg: any): Promise<void> {
 	});
 }
 
-function waitForMessage(ws: WebSocket, type: string, timeoutMs = 5000): Promise<any> {
+function waitForMessage(ws: WebSocket, type: string, timeoutMs = 5000): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
 		const timeout = setTimeout(() => reject(new Error(`Timeout waiting for ${type}`)), timeoutMs);
 		ws.on("message", (data) => {
@@ -54,17 +54,28 @@ function waitForMessage(ws: WebSocket, type: string, timeoutMs = 5000): Promise<
 	});
 }
 
+/** Resolves when the connection closes (never rejects on close). */
+function waitForClose(ws: WebSocket, timeoutMs = 5000): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const timeout = setTimeout(() => reject(new Error("Timeout waiting for close")), timeoutMs);
+		ws.on("close", (code) => {
+			clearTimeout(timeout);
+			resolve(code);
+		});
+	});
+}
+
 // We'll import the server after it's created
-let server: any;
-let serverModule: { startServer: () => Promise<any>; stopServer: () => Promise<void> } | undefined;
+let serverModule: { startServer: () => Promise<void>; stopServer: () => Promise<void> } | undefined;
 
 describe("T5.7 Zero-Trust - Allowlist Attack Tests", () => {
 	beforeAll(async () => {
 		// Set the port for this test
-		process.env.TEST_PORT = '4319';
+		process.env.TEST_PORT = "4319";
 		// Dynamic import to allow server code to be written after tests
-		serverModule = await import("./server");
-		server = await serverModule.startServer();
+		const mod = await import("./server.ts");
+		serverModule = mod;
+		await mod.startServer();
 	});
 
 	afterAll(async () => {
@@ -74,31 +85,30 @@ describe("T5.7 Zero-Trust - Allowlist Attack Tests", () => {
 	});
 
 	describe("Attack: Worker NOT in allowlist", () => {
-		it("should reject connection for worker not in allowlist", async () => {
+		it("should reject registration of a worker not in the allowlist", async () => {
 			const ws = await connectWS();
 
-			// Should not receive welcome - connection should be rejected or closed
-			const welcomePromise = waitForMessage(ws, "welcome");
-			const closePromise = new Promise((resolve) => {
-				ws.on("close", (code) => resolve(code));
+			await sendMessage(ws, {
+				type: "register",
+				role: "worker",
+				nodeId: "attacker-not-in-allowlist",
 			});
 
-			// Either we get a close event or timeout on welcome
-			const result = await Promise.race([
-				welcomePromise.then(() => ({ type: "welcome" })),
-				closePromise.then((code) => ({ type: "close", code }))
-			]);
+			const error = await waitForMessage(ws, "error");
+			expect(error.type).toBe("error");
+			expect(String(error.message)).toContain("not in allowlist");
 
-			if (result.type === "welcome") {
-				// If we got welcome, it should be an error message
-				expect(result.type).toBe("welcome");
-				// In a proper implementation, this would be an error message
-				ws.close();
-			} else {
-				// Connection was rejected
-				expect(result.type).toBe("close");
-				// Could be unauthorized or similar
-			}
+			// The server must also close the rejected connection
+			const closeCode = await waitForClose(ws);
+			expect(typeof closeCode).toBe("number");
+		});
+
+		it("should close a connection that never registers (registration timeout)", async () => {
+			const ws = await connectWS();
+
+			// No registration message: the server must close the silent connection
+			const closeCode = await waitForClose(ws, 3000);
+			expect(typeof closeCode).toBe("number");
 		});
 	});
 });

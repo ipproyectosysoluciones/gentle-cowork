@@ -6,8 +6,6 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import WebSocket from "ws";
-import { createServer } from "http";
-import { generateCertificate } from "./crypto";
 
 // Test utilities
 const WS_PORT = 4321; // Different port to avoid conflicts
@@ -63,8 +61,9 @@ describe("T5.7 Zero-Trust - Per-Role Permission Attack Tests", () => {
 		// Set the port for this test
 		process.env.TEST_PORT = '4321';
 		// Dynamic import to allow server code to be written after tests
-		serverModule = await import("./server");
-		server = await serverModule.startServer();
+		const mod = await import("./server.ts");
+		serverModule = mod;
+		await mod.startServer();
 	});
 
 	afterAll(async () => {

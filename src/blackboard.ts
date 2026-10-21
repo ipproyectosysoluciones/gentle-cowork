@@ -269,14 +269,25 @@ export interface Blackboard {
    * Includes lease fence validation (fence must be >= current lease fence).
    */
   putContract(contract: TaskContract, presentedFence?: number): void;
-  /** Transitions one contract's status and persists; undefined when absent. */
+  /**
+   * Transitions one contract's status and persists; undefined when absent.
+   * `recordArtifacts` (T5.8) ride the history entry only — never contract.artifacts.
+   */
   updateStatus(
     id: string,
     status: TaskStatus,
     nodeId: string,
     artifacts?: string[],
-    presentedFence?: number
+    presentedFence?: number,
+    recordArtifacts?: (string | Record<string, unknown>)[],
   ): TaskContract | undefined;
+  /**
+   * Assigns a pending contract to a worker (T5.8): pending → in_progress with
+   * workerNodeId + leaseFence. The history entry records the assigned worker
+   * as owner of record (orphan recovery keys off it). Returns undefined when
+   * the contract is missing or not pending.
+   */
+  assignContract(id: string, workerNodeId: string, presentedFence?: number): TaskContract | undefined;
   /** Lease management */
   acquireLease(nodeId: string, ttlMs?: number): LeaseInfo | null;
   renewLease(nodeId: string, fence: number): LeaseInfo | null;
@@ -302,27 +313,72 @@ export function openBlackboard(filePath: string): Blackboard {
   let fenceCounter = lastFence;
   const nodes = new Map(loadedNodes.map((node) => [node.nodeId, node] as const));
 
-  /** Writes the whole board atomically: temp file, then rename. */
-  const persist = (): void => {
-    const state: BlackboardState = {
-      version: STATE_VERSION,
-      contracts: [...contracts.values()],
-      lease,
-      nodes: [...nodes.values()],
-      lastFence: fenceCounter,
-    };
-    mkdirSync(dirname(filePath), { recursive: true });
-    const tmpPath = `${filePath}.tmp`;
-    writeFileSync(tmpPath, JSON.stringify(state, null, 2), "utf8");
-    renameSync(tmpPath, filePath);
+  /**
+   * Merges the on-disk state into the in-memory maps under the write lock,
+   * BEFORE persisting. Whole-file last-writer-wins would clobber a concurrent
+   * node's newer contracts (the known Phase 4 debt); the design's conflict
+   * rule decides instead: higher version wins per contract, status priority
+   * (completed > failed > in_progress > pending) breaks version ties, the
+   * strictly fresher heartbeat wins per node, and the highest fence wins the
+   * lease. `protectedIds` (ids this operation just wrote) are never overridden.
+   */
+  const mergeFromDisk = (protectedIds?: ReadonlySet<string>): void => {
+    const disk = loadContracts(filePath);
+    const statusPriority: Record<string, number> = { completed: 4, failed: 3, in_progress: 2, pending: 1 };
+    for (const diskContract of disk.contracts) {
+      if (protectedIds?.has(diskContract.id)) continue;
+      const local = contracts.get(diskContract.id);
+      if (!local) {
+        contracts.set(diskContract.id, diskContract);
+        continue;
+      }
+      if (diskContract.version > local.version) {
+        contracts.set(diskContract.id, diskContract);
+      } else if (
+        diskContract.version === local.version &&
+        (statusPriority[diskContract.status] ?? 0) > (statusPriority[local.status] ?? 0)
+      ) {
+        contracts.set(diskContract.id, diskContract);
+      }
+    }
+    for (const diskNode of disk.nodes) {
+      const local = nodes.get(diskNode.nodeId);
+      if (!local || Date.parse(diskNode.lastHeartbeat) > Date.parse(local.lastHeartbeat)) {
+        nodes.set(diskNode.nodeId, diskNode);
+      }
+    }
+    if (disk.lease && (!lease || disk.lease.fence > lease.fence)) lease = disk.lease;
+    if (disk.lastFence > fenceCounter) fenceCounter = disk.lastFence;
   };
 
-  /** Acquire exclusive write lock, run fn, release lock, persist. */
+  /** Acquire exclusive write lock, merge disk state, run fn, rescue concurrent writes, persist. */
   const withWriteLock = <T>(fn: () => T): T => {
     const fd = acquireWriteLock(filePath);
     try {
+      // Bring this handle up to disk state before mutating, so the operation
+      // builds on what every other node has already written.
+      mergeFromDisk();
+      const snapshot = new Map(contracts);
       const result = fn();
-      persist();
+      // Rescue concurrent writes that landed mid-operation — except the ids
+      // this very operation wrote (they are the newest by construction).
+      const touched = new Set<string>();
+      for (const [id, current] of contracts) {
+        const before = snapshot.get(id);
+        if (!before || before !== current) touched.add(id);
+      }
+      mergeFromDisk(touched);
+      const state: BlackboardState = {
+        version: STATE_VERSION,
+        contracts: [...contracts.values()],
+        lease,
+        nodes: [...nodes.values()],
+        lastFence: fenceCounter,
+      };
+      mkdirSync(dirname(filePath), { recursive: true });
+      const tmpPath = `${filePath}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(state, null, 2), "utf8");
+      renameSync(tmpPath, filePath);
       return result;
     } finally {
       releaseWriteLock(fd);
@@ -349,7 +405,7 @@ export function openBlackboard(filePath: string): Blackboard {
         contracts.set(contract.id, copyContract(contract));
       });
     },
-    updateStatus: (id, status, nodeId, artifacts, presentedFence) => {
+    updateStatus: (id, status, nodeId, artifacts, presentedFence, recordArtifacts) => {
       return withWriteLock(() => {
         // Validate fence inside the lock
         if (lease && typeof presentedFence === "number") {
@@ -368,7 +424,9 @@ export function openBlackboard(filePath: string): Blackboard {
           version: nextVersion,
           nodeId,
           timestamp: now,
-          artifacts,
+          artifacts: recordArtifacts
+            ? [...(artifacts ?? []), ...recordArtifacts]
+            : artifacts,
           leaseFence: lease?.fence,
         };
         const updated: TaskContract = {
@@ -378,6 +436,40 @@ export function openBlackboard(filePath: string): Blackboard {
           history: [...existing.history, historyEntry],
           artifacts: artifacts ? [...existing.artifacts, ...artifacts] : existing.artifacts,
           leaseFence: status === "in_progress" ? lease?.fence : existing.leaseFence,
+        };
+        contracts.set(id, updated);
+        return copyContract(updated);
+      });
+    },
+    assignContract: (id, workerNodeId, presentedFence) => {
+      return withWriteLock(() => {
+        // Validate fence inside the lock
+        if (lease && typeof presentedFence === "number") {
+          if (presentedFence < lease.fence) {
+            throw new Error(
+              `Fence rejected: presented ${presentedFence} < current ${lease.fence} (stale holder)`,
+            );
+          }
+        }
+        const existing = contracts.get(id);
+        if (!existing || existing.status !== "pending") return undefined;
+        const now = new Date().toISOString();
+        const nextVersion = existing.version + 1;
+        const historyEntry: ContractHistoryEntry = {
+          status: "in_progress",
+          version: nextVersion,
+          // The assigned worker is the owner of record: orphan recovery keys off it.
+          nodeId: workerNodeId,
+          timestamp: now,
+          leaseFence: lease?.fence,
+        };
+        const updated: TaskContract = {
+          ...existing,
+          status: "in_progress",
+          workerNodeId,
+          version: nextVersion,
+          history: [...existing.history, historyEntry],
+          leaseFence: lease?.fence,
         };
         contracts.set(id, updated);
         return copyContract(updated);

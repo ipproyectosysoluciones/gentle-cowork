@@ -6,8 +6,6 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import WebSocket from "ws";
-import { createServer } from "http";
-import { generateCertificate } from "./crypto";
 
 // Test utilities
 const WS_PORT = 4322; // Different port to avoid conflicts

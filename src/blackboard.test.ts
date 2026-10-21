@@ -1300,3 +1300,114 @@ describe("blackboard — Phase 5: legacy migration (STATE_VERSION=1 → 2)", () 
     }
   });
 });
+describe("blackboard — Phase 5: step assignment (T5.8)", () => {
+  it("assignContract transitions a pending contract to in_progress with workerNodeId + leaseFence", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = join(tmp, ".gentle-cowork", "blackboard.json");
+      const board = openBlackboard(filePath);
+      board.registerNode({
+        nodeId: "master-1", role: "master", capabilities: ["planner", "verifier"],
+        startedAt: new Date().toISOString(), lastHeartbeat: new Date().toISOString(), status: "alive",
+      });
+      board.registerNode({
+        nodeId: "worker-1", role: "worker", capabilities: ["implementer"],
+        startedAt: new Date().toISOString(), lastHeartbeat: new Date().toISOString(), status: "alive",
+      });
+      const lease = board.acquireLease("master-1");
+      expect(lease).not.toBeNull();
+
+      const contract = makeContract({ id: "gc-1", role: "implementer", status: "pending", version: 1 });
+      board.putContract(contract, lease!.fence);
+
+      const assigned = board.assignContract("gc-1", "worker-1", lease!.fence);
+      expect(assigned).toBeDefined();
+      expect(assigned!.status).toBe("in_progress");
+      expect(assigned!.workerNodeId).toBe("worker-1");
+      expect(assigned!.version).toBe(2);
+      expect(assigned!.leaseFence).toBe(lease!.fence);
+      const lastEntry = assigned!.history[assigned!.history.length - 1];
+      expect(lastEntry.status).toBe("in_progress");
+      // Owner of record in history is the assigned worker (orphan recovery keys off it)
+      expect(lastEntry.nodeId).toBe("worker-1");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("assignContract returns undefined for a missing contract", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = join(tmp, ".gentle-cowork", "blackboard.json");
+      const board = openBlackboard(filePath);
+      expect(board.assignContract("gc-missing", "worker-1")).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("assignContract refuses to assign a contract that is not pending", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = join(tmp, ".gentle-cowork", "blackboard.json");
+      const board = openBlackboard(filePath);
+      const lease = board.acquireLease("master-1");
+      const done = makeContract({ id: "gc-2", role: "implementer", status: "completed", version: 2 });
+      board.putContract(done, lease!.fence);
+
+      const assigned = board.assignContract("gc-2", "worker-1", lease!.fence);
+      expect(assigned).toBeUndefined();
+      // No mutation happened
+      expect(board.getContract("gc-2")!.status).toBe("completed");
+      expect(board.getContract("gc-2")!.workerNodeId).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("assignContract rejects a stale presented fence", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = join(tmp, ".gentle-cowork", "blackboard.json");
+      const board = openBlackboard(filePath);
+      const lease = board.acquireLease("master-1");
+      const contract = makeContract({ id: "gc-1", role: "implementer", status: "pending", version: 1 });
+      board.putContract(contract, lease!.fence);
+
+      // A second holder supersedes the first lease (higher fence)
+      board.acquireLease("worker-1");
+      expect(() => board.assignContract("gc-1", "worker-1", lease!.fence)).toThrow(/Fence rejected/);
+      // The contract is untouched
+      expect(board.getContract("gc-1")!.status).toBe("pending");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("updateStatus recordArtifacts land in the history entry only, never in contract.artifacts", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = join(tmp, ".gentle-cowork", "blackboard.json");
+      const board = openBlackboard(filePath);
+      const lease = board.acquireLease("worker-1");
+      const contract = makeContract({ id: "gc-3", role: "implementer", status: "in_progress", version: 2 });
+      board.putContract(contract, lease!.fence);
+
+      const verdictRecord = { type: "worker_verdict", contractId: "gc-3", status: "completed", criteria: [] };
+      const updated = board.updateStatus("gc-3", "completed", "worker-1", ["src/file.ts"], lease!.fence, [verdictRecord]);
+
+      expect(updated).toBeDefined();
+      // Strings append to contract artifacts...
+      expect(updated!.artifacts).toContain("src/file.ts");
+      // ...the record artifact rides the history entry only
+      expect(updated!.artifacts.every((a) => typeof a === "string")).toBe(true);
+      const lastEntry = updated!.history[updated!.history.length - 1];
+      expect(lastEntry.artifacts).toBeDefined();
+      expect((lastEntry.artifacts as Array<string | Record<string, unknown>>).some(
+        (a) => typeof a === "object" && (a as Record<string, unknown>).type === "worker_verdict",
+      )).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

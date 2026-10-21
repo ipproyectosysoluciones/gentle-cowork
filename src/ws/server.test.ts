@@ -71,7 +71,8 @@ function waitForMessage<T extends ServerMessage>(ws: WebSocket, type: T["type"],
 
 // We'll import the server after it's created
 let server: Server | undefined;
-let serverModule: { startServer: () => Promise<Server>; stopServer: () => Promise<void> } | undefined;
+let wsUrl = "";
+let serverModule: { startServer: (port?: number, bind?: string) => Promise<Server>; stopServer: () => Promise<void> } | undefined;
 
 describe("T5.6 WS Transport", () => {
 	beforeAll(async () => {
@@ -148,10 +149,12 @@ describe("T5.6 WS Transport", () => {
 
 	describe("Lease Grantor Exclusivity", () => {
 		beforeEach(async () => {
-			// Reset server state between tests
+			// Reset server state between tests: fresh ephemeral port + refreshed wsUrl
 			await stopServer();
 			await new Promise((r) => setTimeout(r, 50));
-			await startServer();
+			server = await startServer(0, WS_BIND);
+			const addr = server.address() as { port: number };
+			wsUrl = `ws://127.0.0.1:${addr.port}`;
 		});
 
 		it("should serialize lease grants for concurrent requests", async () => {
@@ -324,7 +327,7 @@ describe("T5.6 WS Transport", () => {
 });
 
 // Module exports for test isolation
-let startServer: () => Promise<Server>;
+let startServer: (port?: number, bind?: string) => Promise<Server>;
 let stopServer: () => Promise<void>;
 
 vi.mock("./server.ts", async () => {

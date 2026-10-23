@@ -35,8 +35,25 @@ export interface AssignStep {
 		objective: string;
 		scope: string[];
 		acceptanceCriteria: string[];
+		/** ODD spec the step implements (T5.9) — passed through to the worker prompt. */
+		specRef?: string;
 	};
 	workerNodeId: string;
+}
+
+/**
+ * Structured verdict a remote worker returns with its step result (T5.9).
+ * Structurally identical to `orchestrator/types.ts` `WorkerStepVerdict` — kept
+ * local so the transport never depends on the orchestrator module graph.
+ */
+export interface WorkerVerdictPayload {
+	contractId: string;
+	workerNodeId: string;
+	status: "completed" | "failed";
+	criteria: Array<{ criterion: string; satisfied: boolean; evidence: string }>;
+	artifacts: string[];
+	executedAt: string;
+	error?: string;
 }
 
 /** Worker reports step result */
@@ -50,6 +67,8 @@ export interface StepResult {
 		decision: "CHANGES" | "NO_CHANGES" | "BLOCKED";
 		reason: string;
 	};
+	/** Full structured verdict for the master to apply to the blackboard (T5.9). */
+	workerVerdict?: WorkerVerdictPayload;
 }
 
 /** Heartbeat */

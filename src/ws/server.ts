@@ -50,6 +50,19 @@ interface PendingLeaseRequest {
 	timestamp: number;
 }
 
+/** Registration summary delivered to the onWorkerRegistered callback (no socket). */
+export type WorkerRegistrationSummary = Pick<WorkerRegistration, "nodeId" | "role" | "capabilities" | "startedAt">;
+
+/**
+ * Injectable transport callbacks (T5.9). The server never touches the
+ * blackboard — the master-side bridge mirrors these events onto it.
+ */
+export interface WSServerOptions {
+	onWorkerRegistered?: (reg: WorkerRegistrationSummary) => void;
+	onStepResult?: (msg: StepResult, senderNodeId: string) => void;
+	onHeartbeat?: (nodeId: string) => void;
+}
+
 export class WSServer {
 	httpServer: Server;
 	private wss: WebSocketServer;
@@ -62,6 +75,7 @@ export class WSServer {
 	constructor(
 		private readonly port: number = WS_PORT,
 		private readonly bind: string = WS_BIND,
+		private readonly options: WSServerOptions = {},
 	) {
 		this.httpServer = createServer();
 		this.wss = new WebSocketServer({ server: this.httpServer });
@@ -127,7 +141,7 @@ export class WSServer {
 								this.sendError(ws, "unauthorized", "Not registered");
 								return;
 							}
-							this.handleStepResult(ws, clientMsg);
+							this.handleStepResult(clientMsg, nodeId ?? "unknown");
 							break;
 						}
 
@@ -229,6 +243,12 @@ export class WSServer {
 		});
 
 		this.log(`Worker registered: ${msg.nodeId} (${msg.capabilities.join(",")})`);
+		this.options.onWorkerRegistered?.({
+			nodeId: msg.nodeId,
+			role: msg.role,
+			capabilities: msg.capabilities,
+			startedAt: msg.startedAt,
+		});
 
 		// Send welcome
 		this.send(ws, {
@@ -238,10 +258,9 @@ export class WSServer {
 		});
 	}
 
-	private handleStepResult(_ws: WebSocket, _msg: StepResult): void {
-		// In a full implementation, this would forward to master logic
-		// For now, just log
-		this.log(`Step result: ${_msg.contractId} ${_msg.status} by ${_msg.stepId}`);
+	private handleStepResult(msg: StepResult, senderNodeId: string): void {
+		this.log(`Step result: ${msg.contractId} ${msg.status} by ${senderNodeId}`);
+		this.options.onStepResult?.(msg, senderNodeId);
 	}
 
 	private handleHeartbeat(msg: Heartbeat): void {
@@ -249,6 +268,7 @@ export class WSServer {
 		if (worker) {
 			worker.lastHeartbeat = Date.now();
 		}
+		this.options.onHeartbeat?.(msg.nodeId);
 	}
 
 	private async handleLeaseRequest(ws: WebSocket, msg: LeaseRequest): Promise<void> {
@@ -368,6 +388,17 @@ export class WSServer {
 		return Array.from(this.workers.values());
 	}
 
+	/**
+	 * Pushes one server message to a registered worker (T5.9). Returns false
+	 * when the node is unknown or its socket is not open.
+	 */
+	sendTo(nodeId: string, msg: ServerMessage): boolean {
+		const worker = this.workers.get(nodeId);
+		if (!worker || worker.ws.readyState !== WebSocket.OPEN) return false;
+		this.send(worker.ws, msg);
+		return true;
+	}
+
 	getLease(): LeaseState {
 		return { ...this.lease };
 	}
@@ -380,11 +411,11 @@ export class WSServer {
 // Module-level singleton for test imports
 let serverInstance: WSServer | null = null;
 
-export async function startServer(port = WS_PORT, bind = WS_BIND): Promise<Server> {
+export async function startServer(port = WS_PORT, bind = WS_BIND, options: WSServerOptions = {}): Promise<Server> {
 	if (serverInstance) {
 		throw new Error("Server already running");
 	}
-	serverInstance = new WSServer(port, bind);
+	serverInstance = new WSServer(port, bind, options);
 	await serverInstance.start();
 	return serverInstance.httpServer;
 }

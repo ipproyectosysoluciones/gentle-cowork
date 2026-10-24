@@ -77,14 +77,31 @@ Pi / gentle-shell (ODD orchestrator)
               └── cowork-verifier (read + tests)
 ```
 
+## Prerequisites
+
+- **Node.js ≥ 24** (the project is pure ESM)
+- **pnpm** (or npm) as package manager
+- **Pi / gentle-shell ≥ 1.2.0** — this is an extension for that harness, not a standalone tool
+- **Git**
+- For multi-node (Phase 5): two or more Pi sessions on the same machine. Remote workers over the network (SSH/Docker VPS, TLS/mTLS) are the next slice (T5.9) — not available yet.
+
 ## Installation
 
 ```bash
-# From the repo root
+# 1. Clone and install dependencies
+git clone https://github.com/ipproyectosysoluciones/gentle-cowork.git
+cd gentle-cowork
+pnpm install          # or: npm install
+
+# 2. Sanity check — both gates must be green
+npx tsc --noEmit      # strict TypeScript, zero errors
+npx vitest run        # full suite
+
+# 3. Load it into your Pi session
 pi -e ./src/gentle-cowork.ts
 ```
 
-Or add to your agent directory extensions folder:
+Or install it permanently in your agent extensions folder:
 
 ```bash
 cp src/gentle-cowork.ts ~/.pi/agent/extensions/gentle-cowork.ts
@@ -93,6 +110,30 @@ cp src/gentle-cowork.ts ~/.pi/agent/extensions/gentle-cowork.ts
 ## Usage
 
 The extension registers `/cowork` as a manual trigger. For automatic delegation, the `tool_call` hook detects when gentle-shell is about to delegate and applies the role orchestration based on the named delegation reason.
+
+To watch the extension coordinate itself (two Pi sessions — a master and a worker — building tasks through the shared blackboard):
+
+```bash
+npm run dogfood:run
+```
+
+To run a worker on a remote VPS (Docker container over an SSH reverse tunnel — T5.9):
+
+```bash
+npm run worker:remote -- --host <vps-host> --user <vps-user> \
+  [--key <ssh-key-path>] --token <allowlist-token> \
+  --env OPENAI_API_KEY=... --expected-node <worker-node-id>
+```
+
+The launcher provisions the VPS (installs Docker, writes `/etc/gentle-cowork/worker.env` with mode 0600, starts the worker container with `--restart unless-stopped`), opens the SSH reverse tunnel to the master's WS port, and verifies the worker's registration on the blackboard. Teardown: append `--teardown`. Model credentials travel only through the env file — never through chat, never baked into the image.
+
+## Notes (read before using)
+
+- **Not a standalone binary.** The extension only routes; the intelligence stays in your Pi/gentle-shell session. Without the host agent it does nothing.
+- **Multi-node maturity (Phase 5).** The local stage is complete: sessions on the same machine coordinate through `.gentle-cowork/blackboard.json` with file locking, leases with monotonic fencing tokens, and version-counter conflict merge. The WebSocket transport (port `4318`, configurable, bound to `127.0.0.1`) is a skeleton for the upcoming remote slice — **TLS/mTLS is not implemented yet; do not expose the port publicly**.
+- **Verifier authority.** The `cowork-verifier` role only ever runs on the master session — workers never verify, they execute.
+- **Workers are subprocesses.** A worker is a `pi --mode rpc` child process that inherits the model configuration of the session that spawned it.
+- **Quality gates.** Strict TypeScript (`no any`), full suite and typecheck green before every PR — the same contract the extension enforces on the agents it orchestrates.
 
 ## Contributing
 
@@ -108,7 +149,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0/). Ver
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE) — Copyright © 2026 Bladimir Parra.
+
+> Credits: the WebSocket framing pattern of the multi-node transport reuses the daemon protocol from **dot-telegram**, created by **Daniel**. Thank you for the solid foundation.
 
 <a href="https://github.com/Gentleman-Programming/gentle-ai">
   <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />

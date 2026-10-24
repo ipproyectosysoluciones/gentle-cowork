@@ -290,6 +290,8 @@ export interface Blackboard {
   runOrphanRecovery(): { recovered: number; requeued: number };
   /** Merge contracts from another node (conflict resolution by version counter) */
   mergeContracts(incoming: TaskContract[]): number;
+  /** Refresh from disk (for multi-process coordination) */
+  refresh(): void;
 }
 
 /** Opens the blackboard state file, failing safe on any read problem. */
@@ -526,6 +528,19 @@ export function openBlackboard(filePath: string): Blackboard {
         }
         return merged;
       });
+    },
+    refresh: () => {
+      const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence } = loadContracts(filePath);
+      contracts.clear();
+      for (const contract of loadedContracts) {
+        contracts.set(contract.id, contract);
+      }
+      lease = loadedLease;
+      fenceCounter = lastFence;
+      nodes.clear();
+      for (const node of loadedNodes) {
+        nodes.set(node.nodeId, node);
+      }
     },
   };
 }

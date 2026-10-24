@@ -117,6 +117,16 @@ To watch the extension coordinate itself (two Pi sessions — a master and a wor
 npm run dogfood:run
 ```
 
+To run a worker on a remote VPS (Docker container over an SSH reverse tunnel — T5.9):
+
+```bash
+npm run worker:remote -- --host <vps-host> --user <vps-user> \
+  [--key <ssh-key-path>] --token <allowlist-token> \
+  --env OPENAI_API_KEY=... --expected-node <worker-node-id>
+```
+
+The launcher provisions the VPS (installs Docker, writes `/etc/gentle-cowork/worker.env` with mode 0600, starts the worker container with `--restart unless-stopped`), opens the SSH reverse tunnel to the master's WS port, and verifies the worker's registration on the blackboard. Teardown: append `--teardown`. Model credentials travel only through the env file — never through chat, never baked into the image.
+
 ## Notes (read before using)
 
 - **Not a standalone binary.** The extension only routes; the intelligence stays in your Pi/gentle-shell session. Without the host agent it does nothing.

@@ -28,11 +28,10 @@ import {
 } from "./protocol.ts";
 
 // Test utilities
-const WS_URL = `ws://${WS_BIND}:${WS_PORT}`;
 
 function connectWS(): Promise<WebSocket> {
 	return new Promise((resolve, reject) => {
-		const ws = new WebSocket(WS_URL);
+		const ws = new WebSocket(wsUrl);
 		ws.on("open", () => resolve(ws));
 		ws.on("error", reject);
 		const timeout = setTimeout(() => reject(new Error("WS connection timeout")), 5000);
@@ -78,7 +77,9 @@ describe("T5.6 WS Transport", () => {
 	beforeAll(async () => {
 		// Dynamic import to allow server code to be written after tests
 		serverModule = await import("./server.ts");
-		server = await serverModule.startServer();
+		server = await serverModule.startServer(0, WS_BIND); // puerto efímero: el SO asigna uno libre, cero colisiones
+		const addr = server.address() as { port: number };
+		wsUrl = `ws://127.0.0.1:${addr.port}`;
 	});
 
 	afterAll(async () => {

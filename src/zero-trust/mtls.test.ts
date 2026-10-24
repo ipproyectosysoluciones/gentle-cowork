@@ -1,18 +1,24 @@
 /**
- * T5.7 Zero-Trust - mTLS Attack Tests (RED phase)
+ * T5.7 Zero-Trust - Protocol-Level Attack Tests
  *
- * Tests that reject invalid/expired/self-signed certificates.
+ * The local slice runs plain WebSocket (TLS is deferred to the remote slice —
+ * records L13/L15). These tests pin the protocol-level rejection behavior that
+ * the local slice actually provides:
+ *  - malformed JSON input gets a protocol error response, and the server keeps running.
+ *
+ * The TLS-handshake attack tests (invalid / expired / attacker self-signed
+ * certificates) are deferred with the remote slice: they belong to the mTLS
+ * handshake, which does not exist locally. They are recorded as explicit TODOs
+ * so the deferred surface stays visible instead of silently green.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import WebSocket from "ws";
-import { createServer } from "http";
-import { generateCertificate } from "./crypto";
 
 // Test utilities
 const WS_PORT = 4320; // Different port to avoid conflicts
 const WS_BIND = "127.0.0.1";
-const WS_URL = `wss://${WS_BIND}:${WS_PORT}`;
+const WS_URL = `ws://${WS_BIND}:${WS_PORT}`;
 
 function connectWS(options = {}): Promise<WebSocket> {
 	return new Promise((resolve, reject) => {
@@ -24,18 +30,7 @@ function connectWS(options = {}): Promise<WebSocket> {
 	});
 }
 
-function sendMessage(ws: WebSocket, msg: any): Promise<void> {
-	return new Promise((resolve, reject) => {
-		if (ws.readyState !== WebSocket.OPEN) {
-			reject(new Error("WS not open"));
-			return;
-		}
-		ws.send(JSON.stringify(msg));
-		resolve();
-	});
-}
-
-function waitForMessage(ws: WebSocket, type: string, timeoutMs = 5000): Promise<any> {
+function waitForMessage(ws: WebSocket, type: string, timeoutMs = 5000): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
 		const timeout = setTimeout(() => reject(new Error(`Timeout waiting for ${type}`)), timeoutMs);
 		ws.on("message", (data) => {
@@ -55,16 +50,15 @@ function waitForMessage(ws: WebSocket, type: string, timeoutMs = 5000): Promise<
 }
 
 // We'll import the server after it's created
-let server: any;
-let serverModule: { startServer: () => Promise<any>; stopServer: () => Promise<void> } | undefined;
+let serverModule: { startServer: () => Promise<void>; stopServer: () => Promise<void> } | undefined;
 
-describe("T5.7 Zero-Trust - mTLS Attack Tests", () => {
+describe("T5.7 Zero-Trust - Protocol-Level Attack Tests", () => {
 	beforeAll(async () => {
 		// Set the port for this test
-		process.env.TEST_PORT = '4320';
-		// Dynamic import to allow server code to be written after tests
-		serverModule = await import("./server");
-		server = await serverModule.startServer();
+		process.env.TEST_PORT = "4320";
+		const mod = await import("./server.ts");
+		serverModule = mod;
+		await mod.startServer();
 	});
 
 	afterAll(async () => {
@@ -73,60 +67,18 @@ describe("T5.7 Zero-Trust - mTLS Attack Tests", () => {
 		}
 	});
 
-	describe("Attack: Invalid certificate", () => {
-		it("should reject connection with invalid certificate", async () => {
-			const ws = await connectWS({
-				// Invalid certificate - this would normally be handled at TLS level
-				// For testing, we'll simulate by sending malformed data after connection
-				rejectUnauthorized: false
-			});
+	it("should respond with a protocol error to malformed JSON input", async () => {
+		const ws = await connectWS();
 
-			// Send malformed data immediately after connection
-			setTimeout(() => {
-				ws.send("invalid json");
-			}, 100);
+		// Malformed input must produce an error message, not a crash or silence
+		ws.send("invalid json");
 
-			const error = await waitForMessage(ws, "error");
-			expect(error.type).toBe("error");
-			ws.close();
-		});
+		const error = await waitForMessage(ws, "error");
+		expect(error.type).toBe("error");
+		ws.close();
 	});
 
-	describe("Attack: Expired certificate", () => {
-		it("should reject connection with expired certificate", async () => {
-			// This would be tested at the TLS handshake level
-			// For now, we'll test that our server properly handles TLS errors
-			const ws = await connectWS({
-				rejectUnauthorized: false
-			});
-
-			// Send malformed data to trigger error handling
-			setTimeout(() => {
-				ws.send("invalid json");
-			}, 100);
-
-			const error = await waitForMessage(ws, "error");
-			expect(error.type).toBe("error");
-			ws.close();
-		});
-	});
-
-	describe("Attack: Self-signed certificate (attacker)", () => {
-		it("should reject connection with attacker self-signed certificate", async () => {
-			// This would be tested at the TLS handshake level
-			// For now, we'll test that our server properly validates certificates
-			const ws = await connectWS({
-				rejectUnauthorized: false
-			});
-
-			// Send malformed data to trigger error handling
-			setTimeout(() => {
-				ws.send("invalid json");
-			}, 100);
-
-			const error = await waitForMessage(ws, "error");
-			expect(error.type).toBe("error");
-			ws.close();
-		});
-	});
+	it.todo("should reject TLS handshake with an invalid certificate (deferred — remote slice, mTLS)");
+	it.todo("should reject TLS handshake with an expired certificate (deferred — remote slice, mTLS)");
+	it.todo("should reject TLS handshake with an attacker self-signed certificate (deferred — remote slice, mTLS)");
 });

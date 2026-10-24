@@ -9,7 +9,9 @@
     "test": "vitest run",
     "dogfood:worker": "tsx scripts/dogfood-worker.ts",
     "dogfood:master": "tsx scripts/dogfood-master.ts",
-    "dogfood:run": "bash scripts/run-dogfood.sh --timeout 180"
+    "dogfood:run": "bash scripts/run-dogfood.sh --timeout 180",
+    "worker:remote": "tsx scripts/launch-remote-worker.ts",
+    "worker:container": "tsx scripts/run-remote-worker.ts"
   },
   "keywords": [
     "pi",

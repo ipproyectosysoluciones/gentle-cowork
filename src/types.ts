@@ -10,6 +10,16 @@ export type CoworkRole = "planner" | "implementer" | "verifier";
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "failed";
 
+/** Audit trail entry for a contract status transition. */
+export interface ContractHistoryEntry {
+  status: TaskStatus;
+  version: number;
+  nodeId: string;
+  timestamp: string;
+  artifacts?: (string | Record<string, unknown>)[];
+  leaseFence?: number;
+}
+
 export interface TaskContract {
   /** Unique identifier for this delegation. */
   id: string;
@@ -34,6 +44,37 @@ export interface TaskContract {
 
   /** Current lifecycle state of this task. */
   status: TaskStatus;
+
+  /** Monotonic version counter (increments on every status transition under lock). */
+  version: number;
+
+  /** Audit trail of all status transitions. */
+  history: ContractHistoryEntry[];
+
+  /** Fence token from the lease that was active when entering in_progress. */
+  leaseFence?: number;
+
+  /** Retry count for orphan recovery re-queues (max 3). */
+  retryCount?: number;
+}
+
+/** Node registration for multi-node coordination. */
+export interface NodeRegistration {
+  nodeId: string;
+  role: "master" | "worker";
+  capabilities: ("planner" | "implementer" | "verifier")[];
+  startedAt: string;
+  lastHeartbeat: string;
+  status: "alive" | "stale";
+}
+
+/** Lease information with fencing token. */
+export interface LeaseInfo {
+  holderNodeId: string;
+  acquiredAt: string;
+  expiresAt: string;
+  renewedAt?: string;
+  fence: number;
 }
 
 /** A verification verdict emitted by cowork-verifier. */

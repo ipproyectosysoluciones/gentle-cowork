@@ -111,7 +111,9 @@ function buildContract(
   scope: string[],
   criteria: string[],
   specRef: string,
+  leaseFence?: number,
 ): TaskContract {
+  const now = new Date().toISOString();
   return {
     id,
     objective,
@@ -121,6 +123,16 @@ function buildContract(
     specRef,
     artifacts: [],
     status: "pending",
+    version: 1,
+    history: [{
+      status: "pending",
+      version: 1,
+      nodeId: "extension",
+      timestamp: now,
+      leaseFence,
+    }],
+    leaseFence,
+    retryCount: 0,
   };
 }
 

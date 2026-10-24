@@ -8,5 +8,9 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "scripts/run-remote-worker.ts",
+    "scripts/launch-remote-worker.ts"
+  ]
 }

@@ -1,0 +1,38 @@
+# gentle-cowork remote worker container
+#
+# Runs the remote worker WebSocket client that connects to the master
+# via SSH reverse tunnel. The container receives ONLY the WS URL and
+# registration token via the env file mounted by the launcher.
+# Model provider credentials are NEVER baked into this image — they arrive
+# at runtime via the env file written by the SSH provision step.
+
+FROM node:24-slim
+
+# Install git and ca-certificates for pi CLI and HTTPS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the pi CLI globally (matches devDependencies version) and tsx for
+# TypeScript execution. The SDK also lands in /app/node_modules via npm ci —
+# subagent.ts imports RpcClient from it at runtime.
+RUN npm install -g @earendil-works/pi-coding-agent@^1.2.0 tsx
+
+# Copy application source
+WORKDIR /app
+COPY package.json package-lock.json ./
+
+# Install dependencies (devDependencies included: the Pi SDK is a devDependency
+# but subagent.ts imports it at runtime; npm's flat layout also exposes the
+# transitive ws package the WS client needs).
+RUN npm ci
+
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+
+# Role marker for subagent exclusion (BLA-26)
+ENV GENTLE_COWORK_ROLE=1
+
+# Entrypoint: remote worker loop (tsx installed globally above)
+CMD ["tsx", "scripts/run-remote-worker.ts"]

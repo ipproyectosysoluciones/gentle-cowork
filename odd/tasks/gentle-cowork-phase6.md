@@ -86,3 +86,4 @@ revisión** (lección del beta) · Runner: Vitest.
   reviewDue false) deja en pie la autoverificación del writer + 222 tests +
   typecheck + auditoría. Pendiente upstream: reparar el relay del revisor
   (pistas: gentle-shell#2355, #63).
+- L8-a (2026-10-24, lección de aterrizaje — corrección del maintainer): El PR de aterrizaje agregado (#51, chained/t59-delivery → dev, rebase) mostró +9.706 en el libro de GitHub aunque los 13 slices se revisaron a ~400 c/u — la disciplina se cumplió en la REVISIÓN pero se violó en el ATERRIZAJE. Regla incorporada: **stacked-to-dev con re-apuntado por merge** — cada PR de la pila apunta a `dev`; al mergearse el eslabón N, el N+1 se re-apunta a `dev` (su diff pasa a mostrar solo su slice) — **nunca un PR agregador de aterrizaje**. Aplicado a la cadena 6.1 (#58 → #59 → #60, protocolo comentado en cada PR).

@@ -67,3 +67,9 @@ revisión** (lección del beta) · Runner: Vitest.
   operaron, no una idealizada) destacada como lo que hace útil al schema. El
   contrato retrospectivo del T8 validado como ejemplo fundacional. Arranca el
   TDD (T2→T3→T5) según el plan §6 del doc aprobado.
+- **L5 (2026-10-25, slice boundary):** el slice 6.1 quedó en 2 commits sobre dev
+  (`661121d` docs de diseño+aprobación, `f97984c` schema+store+tests+fixture) —
+  ~1015 líneas desde origin/dev (los docs del ROADMAP pesan la mitad): por encima
+  del slice de ~400. El boundary queda registrado; NO se commitea más en
+  `feat/phase6` sin decisión del dueño. La unidad de código va con su T5 pendiente
+  (auditoría de cobertura + revisión nativa).

@@ -67,3 +67,19 @@ revisión** (lección del beta) · Runner: Vitest.
   operaron, no una idealizada) destacada como lo que hace útil al schema. El
   contrato retrospectivo del T8 validado como ejemplo fundacional. Arranca el
   TDD (T2→T3→T5) según el plan §6 del doc aprobado.
+- **L5 (2026-10-25, slice boundary):** el slice 6.1 quedó en 2 commits sobre dev
+  (`661121d` docs de diseño+aprobación, `36a323d` schema+store+tests+fixture) —
+  ~1021 líneas desde origin/dev (los docs del ROADMAP pesan la mitad): por encima
+  del slice de ~400. El boundary queda registrado; NO se commitea más en
+  `feat/phase6` sin decisión del dueño.
+- **L7 (2026-10-25, T5):** auditoría de cobertura del gate COMPLETA (árbol limpio,
+  candidato = 7 archivos/1021 líneas contra origin/dev, suite 222 corrida sobre
+  ese árbol, typecheck limpio). Revisión nativa BLOQUEADA por el proveedor:
+  linaje `review-eced5971081701cc` (medium, risk/resilience/reliability, budget
+  200) creado; la captura del grupo falló con 404 "Function not found" en el
+  relay de resilience (370ms, determinista) — la misma rotura que pausó la
+  revisión de T5.9 (`9261e0c`, `f43a0fd`). El linaje queda abierto y reanudable
+  vía STATUS fresco. La unidad NO queda bloqueada: el assess previo (risk medium,
+  reviewDue false) deja en pie la autoverificación del writer + 222 tests +
+  typecheck + auditoría. Pendiente upstream: reparar el relay del revisor
+  (pistas: gentle-shell#2355, #63).

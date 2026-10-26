@@ -68,7 +68,10 @@ revisión** (lección del beta) · Runner: Vitest.
   contrato retrospectivo del T8 validado como ejemplo fundacional. Arranca el
   TDD (T2→T3→T5) según el plan §6 del doc aprobado.
 - **L5 (2026-10-25, slice boundary):** el slice 6.1 quedó en 2 commits sobre dev
-  (`661121d` docs de diseño+aprobación, `36a323d` schema+store+tests+fixture) —
+  entrega encadenada por la norma ~400 (PRs de la cadena, SHAs de los
+  eslabones en sus bodies; `36a323d` superseded — la rama `feat/phase6`
+  queda como registro): docs+diseño (`661121d`), fixture+schema+tests,
+  store+tests+records —
   ~1021 líneas desde origin/dev (los docs del ROADMAP pesan la mitad): por encima
   del slice de ~400. El boundary queda registrado; NO se commitea más en
   `feat/phase6` sin decisión del dueño.

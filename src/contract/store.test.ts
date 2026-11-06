@@ -2,7 +2,7 @@
 // project in the blackboard folder (.gentle-cowork/contract.json). Fail closed
 // on load — a corrupt or unknown-version contract never starts execution —
 // and optimistic version counting for amendments, with a changelog per version.
-import { mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, readFileSync, symlinkSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -384,6 +384,68 @@ describe("contract store — cross-process write discipline", () => {
 		// Releasing is ownership-checked: the new holder's owner survives untouched.
 		expect(readFileSync(join(dir, "owner"), "utf8")).toBe(`${process.pid}:thief\n`);
 		rmSync(dir, { recursive: true, force: true });
+	});
+
+	// Review W1: a writer that stalled past the grace window sees its owner publish
+	// fail (the container was reclaimed and republished meanwhile). Cleaning that up
+	// by deleting the owner would put a second writer inside the live holder's
+	// critical section — the silent lost update this protocol exists to prevent.
+	it("never frees a container another writer published into when its own publish fails", () => {
+		const path = freshPath();
+		const dir = `${path}.lock`;
+		const foreign = `${process.pid}:foreign-holder\n`;
+		const store = openContractStore(path, {
+			lockTimeoutMs: 60,
+			beforeLockOwnerPublish: () => {
+				mkdirSync(dir, { recursive: true, mode: 0o700 });
+				writeFileSync(join(dir, "owner"), foreign, { mode: 0o600 });
+			},
+		});
+
+		expect(() => store.draft(t8Contract, "draft")).toThrow();
+		// The foreign holder's lock and container survive this writer's cleanup.
+		expect(readFileSync(join(dir, "owner"), "utf8")).toBe(foreign);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	// Review W2: the abandoned container is judged empty from a snapshot that another
+	// settler invalidates by freeing it and a fresh writer taking it. Retiring by
+	// rmdir refuses, instead of deleting the new holder's owner by path.
+	it("never retires a container a fresh holder took after the empty one was judged stale", () => {
+		const path = freshPath();
+		const dir = `${path}.lock`;
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		const stale = new Date(Date.now() - 10 * 60_000);
+		utimesSync(dir, stale, stale);
+		const fresh = `${process.pid}:fresh-holder\n`;
+		const store = openContractStore(path, {
+			lockTimeoutMs: 60,
+			beforeEmptyContainerRetire: () => {
+				rmSync(dir, { recursive: true, force: true });
+				mkdirSync(dir, { recursive: true, mode: 0o700 });
+				writeFileSync(join(dir, "owner"), fresh, { mode: 0o600 });
+			},
+		});
+
+		expect(() => store.draft(t8Contract, "draft")).toThrow(ContractStoreBusyError);
+		expect(readFileSync(join(dir, "owner"), "utf8")).toBe(fresh);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	// Review W3: a dispute file whose content cannot be read used to be invisible to
+	// the settle pass, so the container could never be freed. Its age is the evidence.
+	it("clears a dispute file whose content cannot be read once the grace has passed", () => {
+		const path = freshPath();
+		const dir = `${path}.lock`;
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		symlinkSync("/nonexistent-target", join(dir, "taken-ghost"));
+		const stale = new Date(Date.now() - 10 * 60_000);
+		utimesSync(dir, stale, stale);
+
+		const store = openContractStore(path, { lockTimeoutMs: 1_000 });
+		store.draft(t8Contract, "draft after a ghost dispute");
+		expect(store.version()).toBe(1);
+		expect(existsSync(dir)).toBe(false);
 	});
 
 	it("frees its own container after a successful write", () => {

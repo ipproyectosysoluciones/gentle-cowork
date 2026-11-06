@@ -86,6 +86,10 @@ export interface ContractStoreOptions {
 	 * can probe the window where a displaced lock is off its canonical name (#69).
 	 */
 	beforeStaleLockRestore?: () => void;
+	/** @internal Test seam: runs inside a freshly created container, before its owner. */
+	beforeLockOwnerPublish?: () => void;
+	/** @internal Test seam: runs before an empty container is retired. */
+	beforeEmptyContainerRetire?: () => void;
 }
 
 export interface ContractStore {
@@ -243,10 +247,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 		const taken = names
 			.filter((name) => name.startsWith(LOCK_TAKEN_PREFIX))
 			.sort()
-			.flatMap((name) => {
-				const entry = readLockEntry(join(lockPath, name), name);
-				return entry === undefined ? [] : [entry];
-			});
+			.map((name) => readLockEntry(join(lockPath, name), name) ?? { name, mtimeMs: stats.mtimeMs });
 		return { kind: "directory", owner, taken, mtimeMs: stats.mtimeMs };
 	};
 
@@ -285,6 +286,22 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 	};
 
 	/**
+	 * Frees a container this process created or judged empty, **without deleting an
+	 * owner file**. `rmdir` refuses a container that someone has published into, and
+	 * that refusal is the check a delete-by-path cannot make: a stale read of "no
+	 * owner here" must never remove the owner a fresher writer just wrote (review
+	 * W1/W2 — both were silent lost updates).
+	 */
+	const retireEmptyContainer = (): void => {
+		options.beforeEmptyContainerRetire?.();
+		try {
+			rmdirSync(lockPath);
+		} catch {
+			/* someone owns it now, a dispute file keeps it, or it is already gone */
+		}
+	};
+
+	/**
 	 * Takes the lock if the container is free. Ownership is established by the
 	 * `mkdir`: no other writer can create this name while it exists, so publishing
 	 * the owner inside it cannot race with anyone. A failure here frees only the
@@ -301,9 +318,13 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			return false;
 		}
 		try {
+			options.beforeLockOwnerPublish?.();
 			writeFileSync(ownerPath, `${token}\n`, { mode: 0o600, flag: "wx" });
 		} catch (error) {
-			releaseLockContainer();
+			// Never delete an owner here: the write may have failed *because* another
+			// writer republished the container after this process stalled past the
+			// grace, and freeing it would put two writers inside one critical section.
+			retireEmptyContainer();
 			throw error;
 		}
 		return readLockEntry(ownerPath, LOCK_OWNER_NAME)?.token === token;
@@ -338,17 +359,18 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 	 * evidence: a live holder is put back and keeps running untouched; a dead or
 	 * long-unreadable one is cleared so the container can be released (#69, S4/S6).
 	 */
-	const settleDispute = (entry: LockEntry): void => {
+	const settleDispute = (entry: LockEntry): boolean => {
 		const pid = ownerPid(entry.token);
 		if (pid !== undefined) {
 			if (!provablyDead(pid)) {
 				restoreDisputedOwner(entry);
-				return;
+				return false;
 			}
 		} else if (Date.now() - entry.mtimeMs < LOCK_UNREADABLE_GRACE_MS) {
-			return; // young and unreadable: the reclaimer that parked it may still be working
+			return false; // young and unreadable: the reclaimer that parked it may still be working
 		}
 		rmSync(join(lockPath, entry.name), { force: true });
+		return true;
 	};
 
 	/**
@@ -381,7 +403,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			return;
 		}
 		rmSync(target, { force: true }); // exactly the owner judged dead
-		releaseLockContainer();
+		retireEmptyContainer(); // rmdir only: an owner republished meanwhile is never deleted
 	};
 
 	/** A regular file at the lock path predates the container protocol. */
@@ -415,8 +437,9 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			settleLegacyLock(view);
 			return;
 		}
+		let cleared = false;
 		for (const entry of view.taken) {
-			settleDispute(entry);
+			cleared = settleDispute(entry) || cleared;
 		}
 		const after = viewLock();
 		if (after.kind !== "directory") {
@@ -426,8 +449,11 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 		if (owner === undefined) {
 			// A writer that died between `mkdir` and its owner write, or one still inside
 			// that window: age is the only evidence, and a young one is never touched.
-			if (Date.now() - after.mtimeMs >= LOCK_UNREADABLE_GRACE_MS) {
-				releaseLockContainer();
+			// A container we just cleared cannot have a writer inside the create window
+			// (publishing an owner needs this container to be absent), so it is provably
+			// ownerless now; otherwise only age is evidence and the grace applies.
+			if (cleared || Date.now() - after.mtimeMs >= LOCK_UNREADABLE_GRACE_MS) {
+				retireEmptyContainer(); // the snapshot may be stale: rmdir is the only safe check
 			}
 			return;
 		}

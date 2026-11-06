@@ -106,3 +106,21 @@ revisión** (lección del beta) · Runner: Vitest.
   deletions**, within the norm. The chain is based on `origin/dev` on purpose:
   `store.ts` and `store.test.ts` are byte-identical between `dev` and the reviewed
   candidate, so this carries no unreviewed 6.2 code (6.2 is not in `dev`).
+- **L16-b (2026-11-06, chain slice B):** The write lock with an owner.
+  `draft`/`amend` ran `load -> version check -> update -> rename` with no critical
+  section at all: two processes pinning the same `expectedVersion` both passed the
+  check and the second `rename` silently discarded the contract and its changelog
+  entry (the 3 CRITICALs R1-001 / R3-001 / R4-CONCURRENT-WRITE). Every write now
+  takes `<contract.json>.lock`, created with `openSync(..., "wx", 0o600)` and
+  carrying `pid:token`; the version check, the update and the rename are one
+  section; the loser gets `ContractStoreBusyError` naming the lock path (wait
+  bounded by the new `lockTimeoutMs` option) instead of being discarded silently;
+  and release **verifies the on-disk token** before deleting, so a writer that lost
+  the lock never deletes the new holder's. A throwing update callback releases the
+  lock in `finally`. This slice deliberately does NOT reclaim locks left by dead
+  processes: that, together with the grace window for unreadable owners and the safe
+  cleanup, is slice C (the boundary decision is recorded here because the cut falls
+  inside the same file). TDD: RED 4 failed / 17 passed against the previous
+  implementation -> **29/29** focused; suite **243 passed | 3 todo (246)**;
+  `pnpm run typecheck` exit 0; authored size at the ~400 norm with the boundary
+  recorded in the same commit, as `AGENTS.md` requires.

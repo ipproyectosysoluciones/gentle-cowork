@@ -53,6 +53,14 @@ evidence instead of fixing blindly.
 - Before pushing: audit the gate coverage if the change touches an
   authorization path — every install/execution entry must be gated or
   explicitly exempted with a documented reason.
+- **Slice norm (~400 lines):** before committing, run
+  `git diff --shortstat <slice base>`. At or above ~400 authored lines the slice
+  is split, or the boundary decision is recorded in the ODD doc **in the same
+  commit** (slices 6.1 at 1021 and 6.2 at 624 lines shipped without that check and
+  needed a reconciliation on 2026-10-26 — the norm is not left to memory).
+- The ODD task checkboxes are updated **in the commit that closes the task**, not
+  when the slice closes: a doc that lags the code invalidates the next session's
+  resume, which is the doc's whole purpose.
 
 ## Upstream coordination — the replicable formula
 

@@ -28,6 +28,9 @@ revisión** (lección del beta) · Runner: Vitest.
   6.1 solo declara el campo).
 - **S6 (riesgo alto 6.1, decisión 5):** revisión nativa por unidad con auditoría de
   cobertura de entradas del gate antes de cada revisión nativa.
+- **S7 (ROADMAP, slice 6.2 — verbatim):** "**Motor de interpretación**: contrato →
+  TaskContracts ejecutables + puertas evaluables en runtime (deadline vencido →
+  gate; cláusula → restricción de scope; presupuesto → límites del oráculo)".
 
 ## Tasks
 
@@ -38,13 +41,37 @@ revisión** (lección del beta) · Runner: Vitest.
   storm, puertas). ✅ **APROBADO por el dueño (25/oct): "producción-quality" —
   todas las decisiones de diseño correctas, #2 destacada (las puertas que
   realmente operaron). Revisión registrada al arrancar el TDD.**
-- [ ] **T2** [S2, S3] (tras aprobación del doc) TDD: `src/contract/schema.ts` —
-  tipos + validación fail-closed + migración vN→vN+1. Tests primero.
-- [ ] **T3** [S3] (tras aprobación) `src/contract/store.ts` — persistencia en
-  blackboard con version counter (primitivas T5.1) + ejemplo del T8 como fixture.
-- [ ] **T4** [S5] (tras aprobación) campo de presupuesto/puertas declarativo en el
-  schema (la evaluación es 6.2/6.4).
-- [ ] **T5** [S6] revisión nativa de la unidad con auditoría de cobertura previa.
+- [x] **T2** [S2, S3] `src/contract/schema.ts` — tipos + validación fail-closed
+  (enums cerrados) + cadena de migración vN→vN+1, con tests primero. ✅ `bc91bf3`
+  (+438 líneas: schema 309 + schema.test 129), mergeado a `dev` en PR #59.
+- [x] **T3** [S3] `src/contract/store.ts` — store versionado: escrituras atómicas
+  0600, draft/amend con versión optimista, `ContractVersionConflict`; el contrato
+  retrospectivo del T8 es el fixture compartido (`src/contract/fixtures.ts`).
+  ✅ `e783281` (+311 líneas), mergeado a `dev` en PR #60.
+- [x] **T4** [S5] presupuesto y puertas declarativos en el schema (`bc91bf3`); la
+  exposición en runtime llega con el intérprete (T7), la evaluación de guardas es
+  6.4. ✅
+- [x] **T5** [S6] auditoría de cobertura de entradas del gate ANTES de la revisión
+  nativa: árbol limpio, candidato 7 archivos/1021 líneas contra `origin/dev`, suite
+  222 tests sobre ese árbol, typecheck limpio. ✅ (evidencia en L7)
+- [ ] **T6** [S6] revisión nativa de la unidad 6.1 — **BLOQUEADA POR EL PROVEEDOR**: linaje
+  `review-eced5971081701cc` abierto (medium, risk/resilience/reliability), los 3
+  slots reofrecidos intactos. El bloqueo migró del 404 del relay (L7) al **401 de
+  auth del relay de revisores** (L12: la API key no tiene acceso al modelo
+  solicitado). Reanudación: STATUS fresco del linaje + captura del binding
+  reofrecido, cuando el acceso al modelo del relé esté restablecido. No bloquea la
+  entrega (assess previo: medium, reviewDue false).
+
+### Slice 6.2 — motor de interpretación
+
+- [x] **T7** [S7] `src/contract/interpreter.ts` + tests: contrato → TaskContracts
+  (entregables pending) con criterios prefijados por `[kind]`, `specRef` con
+  fallback `contract:<id>`, history v1; delivered/blocked → skipped con detail;
+  gates declarados evaluados; deadlines derivados fail-closed (malformed →
+  overdue); budget y scopeClauses verbatim; `generatedAt` desde reloj inyectado.
+  26 tests RED→GREEN, suite 248. ✅ `fbd95d4` (+624 líneas: interpreter 175 +
+  interpreter.test 449).
+- [x] **T8** [S7] boundary record del slice (L9 + L10). ✅ `4f5209b`
 
 ## Log
 
@@ -89,6 +116,53 @@ revisión** (lección del beta) · Runner: Vitest.
 - L8-a (2026-10-24, lección de aterrizaje — corrección del maintainer): El PR de aterrizaje agregado (#51, chained/t59-delivery → dev, rebase) mostró +9.706 en el libro de GitHub aunque los 13 slices se revisaron a ~400 c/u — la disciplina se cumplió en la REVISIÓN pero se violó en el ATERRIZAJE. Regla incorporada: **stacked-to-dev con re-apuntado por merge** — cada PR de la pila apunta a `dev`; al mergearse el eslabón N, el N+1 se re-apunta a `dev` (su diff pasa a mostrar solo su slice) — **nunca un PR agregador de aterrizaje**. Aplicado a la cadena 6.1 (#58 → #59 → #60, protocolo comentado en cada PR).
 
 - **L9 (2026-10-25, slice boundary 6.2):** el slice 6.2 (motor de interpretación) quedó en 1 commit sobre `feat/phase6-interpretation`: `src/contract/interpreter.ts` + `src/contract/interpreter.test.ts` — 26 tests RED→GREEN, suite completa 248 passed, typecheck limpio. Contrato T8 interpretado: entregables pending → TaskContracts (id, objective, criteria con prefijo [kind], specRef fallback `contract:<id>`, history v1 con nodeId `contract-interpreter`); delivered/blocked → skipped con detail; gates declarados evaluados (passed con evidence, open blocks, paused pauses); deadlines derivados (hard/soft future→open, past→overdue, null→ausentes, malformed→overdue fail-closed); budget expuesto verbatim; scopeClauses verbatim; generatedAt desde reloj inyectado. Determinismo verificado. Cero pendientes → contracts [] válido. Componente 1 (contrato) cubierto.
+
+- **L10 (2026-10-26, reconciliación del tracking — dueño: "demosle trámite"):** el
+  doc había derivado de la realidad: T2–T5 seguían `[ ]` con schema (`bc91bf3`),
+  store (`e783281`) e intérprete (`fbd95d4`) ya commiteados y mergeados, y el slice
+  6.2 no existía como task (solo en L9). Reconciliado: T2–T4 a `[x]` con su SHA y
+  su PR; T5 se parte en auditoría de cobertura (`[x]`, hecha en L7) y revisión
+  nativa (T6, `[ ]` **bloqueada por el proveedor**, linaje
+  `review-eced5971081701cc`); alta del slice 6.2 con su spec verbatim del ROADMAP
+  (S7) y sus tasks T7–T8. Lección de proceso: **la proyección de tasks se actualiza
+  en el mismo commit que cierra la task, no al cerrar el slice** — un doc que miente
+  invalida el resume de la sesión siguiente, que es exactamente lo que el doc existe
+  para evitar.
+- **L11 (2026-10-26, norma del slice — institucionalizada por pedido del dueño):**
+  los slices 6.1 (1021 líneas) y 6.2 (624 líneas) excedieron la norma ~400. El
+  boundary se registró en ambos casos, pero la norma se violó de forma sistemática.
+  La norma ya no se confía a la memoria: la regla vinculante queda en `AGENTS.md`
+  ("Work-unit commits") con el chequeo mecánico previo al commit
+  (`git diff --stat <base>` ≥ 400 líneas añadidas → partir el slice, o registrar la
+  decisión de boundary del dueño antes de commitear), y el mismo commit lleva el
+  doc actualizado. Verificación de esta norma: `git diff --shortstat` contra la base
+  del slice impreso en el cuerpo del commit.
+- **L12 (2026-10-26, reintento de los linajes — bloqueo migrado a auth):** STATUS
+  fresco de ambos linajes: los dos siguen en `state: reviewing`, autoridad intacta,
+  ningún slot consumido (`mutation_performed: false`). `review-eced5971081701cc`
+  (6.1) reofrece el grupo completo — risk (0), resilience (1), reliability (2);
+  `review-08027998ffe5a173` (T5.9) reofrece solo el slot resilience (1); risk y
+  reliability ya están admitidos. Forecast del grupo 6.1: 3 corridas de modelo por
+  relay del host. Al ejecutarlo, el relé **falló en 1.5s con 401**:
+  `"This API key does not have access to the requested model."` — el 404 del relay
+  desapareció, pero el transporte ahora no puede autenticarse contra el modelo del
+  revisor (misma clase de error que abortó al modelo previo de esta sesión). **No se
+  consume ningún slot y no se reintenta**: la reanudación sigue siendo STATUS fresco
+  + binding reofrecido, y depende de restablecer el acceso al modelo del relé de
+  revisores, no de nada del repo.
+- **L13 (2026-10-26, auditoría de dependencias — corrección de un dato previo):** el
+  "5 vulnerabilidades (3 moderate, 2 high)" que reporté en el estado del proyecto
+  venía del árbol de instalación de extensiones de Pi (`~/.gentle-shell/agent`), NO
+  del repo. `pnpm audit` en este repo reporta **1 moderate**: `minimatch`
+  (`>=7.0.0 <11.0.1`, GHSA-g3hv-75wg-m249, DoS por amplificación de globparts) que
+  entra por `@earendil-works/pi-coding-agent@1.3.0`, un **devDependency** con pin
+  exacto `minimatch: 10.2.6`. Decisión: **no se fuerza el override** a 11.x — violaría
+  un pin exacto del harness de Pi y es un salto de major en un glob matcher que la
+  suite del repo no cubre; el fix corresponde upstream (pi-coding-agent subiendo su
+  pin). Riesgo aceptado y registrado: herramienta de desarrollo, no código
+  distribuido. El árbol de extensiones de Pi queda como decisión aparte del dueño
+  (10 vulnerabilidades, fixes no rompientes disponibles, `--force` degradaría
+  `bash-language-server`).
 - **L16-a (2026-11-06, native review of 6.1 -> correction chain, slice A):** The review
   of lineage `review-eced5971081701cc` — the three-lens group plus refuter, the first
   run after the reviewer relay was repaired — found **3 CRITICALs from a single root**:

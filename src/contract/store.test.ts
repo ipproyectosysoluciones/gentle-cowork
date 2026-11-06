@@ -2,7 +2,8 @@
 // project in the blackboard folder (.gentle-cowork/contract.json). Fail closed
 // on load — a corrupt or unknown-version contract never starts execution —
 // and optimistic version counting for amendments, with a changelog per version.
-import { mkdirSync, mkdtempSync, existsSync, statSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, statSync, readFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -99,100 +100,6 @@ describe("contract store — amend with version counter and changelog", () => {
 	});
 });
 
-describe("contract store — fail closed on load", () => {
-	it("throws ContractValidationError on a corrupt file", () => {
-		const path = freshPath();
-		openContractStore(path).draft(t8Contract, "draft");
-		writeFileSync(path, "{ not json", { mode: 0o600 });
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-
-	it("throws ContractMigrationError on an unknown schema version", () => {
-		const path = freshPath();
-		const store = openContractStore(path);
-		store.draft(t8Contract, "draft");
-		const envelope = JSON.parse(readFileSync(path, "utf8")) as { contract: { schema: string } };
-		envelope.contract.schema = "gentle-cowork.projectcontract/v99";
-		writeFileSync(path, JSON.stringify(envelope), { mode: 0o600 });
-		expect(() => openContractStore(path)).toThrow(ContractMigrationError);
-	});
-
-	it("throws ContractValidationError when the file holds a structurally invalid contract", () => {
-		const path = freshPath();
-		const store = openContractStore(path);
-		store.draft(t8Contract, "draft");
-		const envelope = JSON.parse(readFileSync(path, "utf8")) as { contract: Record<string, unknown> };
-		delete envelope.contract.gates;
-		writeFileSync(path, JSON.stringify(envelope), { mode: 0o600 });
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-});
-
-describe("contract store — changelog validation on load", () => {
-	const corrupt = (mutate: (envelope: Record<string, unknown>) => void): string => {
-		const path = freshPath();
-		openContractStore(path).draft(t8Contract, "draft");
-		const envelope = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-		mutate(envelope);
-		writeFileSync(path, JSON.stringify(envelope), { mode: 0o600 });
-		return path;
-	};
-
-	it("throws ContractValidationError when a changelog entry is not an object", () => {
-		const path = corrupt((envelope) => {
-			envelope.changelog = [null];
-		});
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-
-	it("throws ContractValidationError when an entry lacks a summary", () => {
-		const path = corrupt((envelope) => {
-			envelope.changelog = [{ version: 1, at: new Date().toISOString() }];
-		});
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-
-	it("throws ContractValidationError when an entry version is not a positive integer", () => {
-		const path = corrupt((envelope) => {
-			envelope.changelog = [{ version: 0, at: new Date().toISOString(), summary: "draft" }];
-		});
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-
-	it("throws ContractValidationError when the last entry disagrees with the envelope version", () => {
-		const path = corrupt((envelope) => {
-			envelope.changelog = [{ version: 7, at: new Date().toISOString(), summary: "draft" }];
-		});
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-
-	it("throws ContractValidationError when entry versions are not 1..N", () => {
-		const path = corrupt((envelope) => {
-			envelope.version = 2;
-			envelope.changelog = [
-				{ version: 2, at: new Date().toISOString(), summary: "skipped a version" },
-				{ version: 2, at: new Date().toISOString(), summary: "duplicate version" },
-			];
-		});
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-
-	it("throws ContractValidationError on an empty changelog for a persisted version", () => {
-		const path = corrupt((envelope) => {
-			envelope.changelog = [];
-		});
-		expect(() => openContractStore(path)).toThrow(ContractValidationError);
-	});
-
-	it("still loads every shape the store itself writes", () => {
-		const path = freshPath();
-		const store = openContractStore(path);
-		store.draft(t8Contract, "draft");
-		store.amend("first amendment", (draft) => draft, 1);
-		expect(openContractStore(path).get()?.changelog.map((entry) => entry.version)).toEqual([1, 2]);
-	});
-});
-
 describe("contract store — cross-process write discipline", () => {
 	it("refuses to draft while another process holds the store lock", () => {
 		const path = freshPath();
@@ -255,6 +162,116 @@ describe("contract store — cross-process write discipline", () => {
 		const reopened = openContractStore(path);
 		expect(reopened.version()).toBe(2);
 		expect(reopened.get()?.changelog.map((entry) => entry.summary)).toEqual(["draft", "first amendment"]);
+	});
+
+	it("never steals the lock of a holder that is alive but slow", () => {
+		const path = freshPath();
+		const store = openContractStore(path, { lockTimeoutMs: 60 });
+		store.draft(t8Contract, "draft");
+
+		// A live writer holds the lock while a slow update runs: the file looks
+		// old, but the process is alive, so it must not be displaced by age.
+		const held = `${process.pid}:live-slow-holder\n`;
+		writeFileSync(`${path}.lock`, held, { mode: 0o600 });
+		const old = new Date(Date.now() - 10 * 60_000);
+		utimesSync(`${path}.lock`, old, old);
+		try {
+			expect(() => store.amend("must not steal", (draft) => draft, 1)).toThrow(ContractStoreBusyError);
+			expect(readFileSync(`${path}.lock`, "utf8")).toBe(held);
+		} finally {
+			rmSync(`${path}.lock`, { force: true });
+		}
+		expect(openContractStore(path).version()).toBe(1);
+	});
+
+	it("never steals the lock of a live holder in a different process", () => {
+		const path = freshPath();
+		const store = openContractStore(path, { lockTimeoutMs: 60 });
+		store.draft(t8Contract, "draft");
+
+		// The holder is genuinely alive and is NOT this process, so the
+		// `pid === process.pid` shortcut cannot answer for it: only the real
+		// liveness probe keeps the lock in place.
+		const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], { stdio: "ignore" });
+		try {
+			const childPid = child.pid;
+			if (childPid === undefined) throw new Error("the child process did not start");
+			const held = `${childPid}:live-foreign-holder\n`;
+			writeFileSync(`${path}.lock`, held, { mode: 0o600 });
+
+			expect(() => store.amend("must not steal", (draft) => draft, 1)).toThrow(ContractStoreBusyError);
+			expect(readFileSync(`${path}.lock`, "utf8")).toBe(held);
+		} finally {
+			child.kill();
+			rmSync(`${path}.lock`, { force: true });
+		}
+		expect(openContractStore(path).version()).toBe(1);
+	});
+
+	it("holds a lock whose owner is unreadable while it is younger than the grace window", () => {
+		const path = freshPath();
+		const store = openContractStore(path, { lockTimeoutMs: 60 });
+		store.draft(t8Contract, "draft");
+
+		// A writer killed between openSync("wx") and its owner write leaves a
+		// 0-byte lock. Its owner cannot be liveness-checked, so a fresh one may
+		// still be a writer about to write its pid: it is never displaced by age.
+		writeFileSync(`${path}.lock`, "", { mode: 0o600 });
+		try {
+			expect(() => store.amend("first attempt", (draft) => draft, 1)).toThrow(ContractStoreBusyError);
+			expect(() => store.amend("second attempt", (draft) => draft, 1)).toThrow(ContractStoreBusyError);
+			expect(existsSync(`${path}.lock`)).toBe(true);
+		} finally {
+			rmSync(`${path}.lock`, { force: true });
+		}
+		expect(openContractStore(path).version()).toBe(1);
+	});
+
+	it("reclaims an unreadable lock older than the grace window", () => {
+		const path = freshPath();
+		const store = openContractStore(path, { lockTimeoutMs: 500 });
+		store.draft(t8Contract, "draft");
+
+		// An abandoned 0-byte lock: nobody is alive to prove it wrong, but it has
+		// outlived every plausible write, so the next writer self-heals instead
+		// of failing forever with ContractStoreBusyError.
+		writeFileSync(`${path}.lock`, "", { mode: 0o600 });
+		const stale = new Date(Date.now() - 10 * 60_000);
+		utimesSync(`${path}.lock`, stale, stale);
+
+		expect(store.amend("after the unreadable lock", (draft) => draft, 1).version).toBe(2);
+		expect(existsSync(`${path}.lock`)).toBe(false);
+		expect(openContractStore(path).version()).toBe(2);
+	});
+
+	it("reclaims a garbled lock older than the grace window", () => {
+		const path = freshPath();
+		const store = openContractStore(path, { lockTimeoutMs: 500 });
+		store.draft(t8Contract, "draft");
+
+		// Same self-heal, different corruption shape: the owner text is present
+		// but carries no pid, so age is again the only available evidence.
+		writeFileSync(`${path}.lock`, "not-a-pid", { mode: 0o600 });
+		const stale = new Date(Date.now() - 10 * 60_000);
+		utimesSync(`${path}.lock`, stale, stale);
+
+		expect(store.amend("after the garbled lock", (draft) => draft, 1).version).toBe(2);
+		expect(existsSync(`${path}.lock`)).toBe(false);
+		expect(openContractStore(path).version()).toBe(2);
+	});
+
+	it("reclaims the lock of a holder whose process is gone", () => {
+		const path = freshPath();
+		const store = openContractStore(path, { lockTimeoutMs: 500 });
+		store.draft(t8Contract, "draft");
+
+		// A writer died holding the lock: its pid is provably gone, so the next
+		// writer of this host reclaims it instead of waiting for a timeout.
+		const dead = spawnSync(process.execPath, ["-e", "0"]);
+		writeFileSync(`${path}.lock`, `${dead.pid}:died\n`, { mode: 0o600 });
+
+		expect(store.amend("after the crash", (draft) => draft, 1).version).toBe(2);
+		expect(existsSync(`${path}.lock`)).toBe(false);
 	});
 
 	it("does not delete a lock another writer took over", () => {

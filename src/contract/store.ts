@@ -27,6 +27,7 @@ import {
 	readFileSync,
 	renameSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -100,6 +101,20 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 10;
+/**
+ * How long a lock whose owner cannot be read must sit untouched before another
+ * writer may reclaim it. Its owner cannot be liveness-checked, so age is the
+ * only evidence available — and a young one may still be a writer that has
+ * created the file and not yet written its owner.
+ */
+const LOCK_UNREADABLE_GRACE_MS = 30_000;
+
+/** The lock file as observed at one instant: absent, or present with owner and mtime. */
+interface LockSnapshot {
+	present: boolean;
+	owner?: string;
+	mtimeMs?: number;
+}
 
 const sleepSync = (ms: number): void => {
 	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -146,13 +161,90 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 	const lockPath = `${filePath}.lock`;
 	let file: ContractFile | undefined;
 
-	/** The lock owner as written in the lock file (`pid:token`), or undefined. */
-	const readLockOwner = (): string | undefined => {
+	/** The raw lock file text, or undefined when it cannot be read. */
+	const readLockText = (): string | undefined => {
 		try {
-			return readFileSync(lockPath, "utf8").split("\n")[0]?.trim() || undefined;
+			return readFileSync(lockPath, "utf8");
 		} catch {
 			return undefined;
 		}
+	};
+
+	/** The lock owner as written in the lock file (`pid:token`), or undefined. */
+	const readLockOwner = (): string | undefined => readLockText()?.split("\n")[0]?.trim() || undefined;
+
+	/** The lock file's owner and mtime, or that there is nothing on disk. */
+	const readLockSnapshot = (): LockSnapshot => {
+		const text = readLockText();
+		if (text === undefined) {
+			return { present: false };
+		}
+		const owner = text.split("\n")[0]?.trim() || undefined;
+		try {
+			return { present: true, owner, mtimeMs: statSync(lockPath).mtimeMs };
+		} catch {
+			return { present: false }; // gone between the read and the stat
+		}
+	};
+
+	/**
+	 * Removes the lock only while it is still exactly the snapshot just inspected.
+	 * Between a read and a delete another waiter may reclaim the old lock and
+	 * create its own: deleting that fresh lock by path alone would put two writers
+	 * inside one critical section. A changed (or already absent) lock is left
+	 * untouched and the caller's loop simply retries.
+	 */
+	const removeLockIfUnchanged = (snapshot: LockSnapshot): boolean => {
+		if (!snapshot.present) {
+			return false; // nothing on disk to remove
+		}
+		const current = readLockSnapshot();
+		if (!current.present || current.owner !== snapshot.owner || current.mtimeMs !== snapshot.mtimeMs) {
+			return false; // taken over in the meantime: delete nothing
+		}
+		rmSync(lockPath, { force: true });
+		return true;
+	};
+
+	/**
+	 * A readable owner is never displaced by age: a live holder is never stolen,
+	 * however slow it is. Elapsed time alone is not evidence of death, and
+	 * treating it as such produced two writers inside one critical section, each
+	 * reporting success.
+	 *
+	 * An unreadable owner — absent, empty, or without a positive pid — cannot be
+	 * liveness-checked at all; a writer killed between `openSync("wx")` and its
+	 * owner write leaves exactly that shape. There, and only there, age is the
+	 * evidence: after LOCK_UNREADABLE_GRACE_MS no write can still be holding it,
+	 * and never reclaiming it would fail every later writer forever.
+	 */
+	const reclaimAbandonedLock = (): void => {
+		const snapshot = readLockSnapshot();
+		if (!snapshot.present) {
+			return; // nothing to reclaim
+		}
+		const pid = Number.parseInt(snapshot.owner?.split(":")[0] ?? "", 10);
+		const readable = snapshot.owner !== undefined && Number.isInteger(pid) && pid > 0;
+		if (!readable) {
+			const ageMs = Date.now() - (snapshot.mtimeMs ?? Date.now());
+			if (ageMs < LOCK_UNREADABLE_GRACE_MS) {
+				return; // young: possibly a writer that has not written its pid yet
+			}
+			removeLockIfUnchanged(snapshot);
+			return;
+		}
+		if (pid === process.pid) {
+			return; // ours: hold it
+		}
+		try {
+			process.kill(pid, 0);
+			return; // alive (possibly under another user): hold it
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+				return; // EPERM means alive; anything else is not evidence of death
+			}
+		}
+		removeLockIfUnchanged(snapshot); // provably dead: reclaim it, unless it already moved on
 	};
 
 	/** Takes the lock if it is free; never leaves an unowned lock behind. */
@@ -170,7 +262,9 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			writeFileSync(fd, `${token}\n`);
 		} catch (error) {
 			closeSync(fd);
-			rmSync(lockPath, { force: true });
+			// Never a bare delete: another writer may have reclaimed this file and
+			// created its own, which must survive this cleanup.
+			removeLockIfUnchanged(readLockSnapshot());
 			throw error;
 		}
 		closeSync(fd);
@@ -187,6 +281,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			if (createLock(token) && readLockOwner() === token) {
 				return token;
 			}
+			reclaimAbandonedLock();
 			if (Date.now() >= deadline) {
 				throw new ContractStoreBusyError(
 					`contract store is held by ${readLockOwner() ?? "another process"} (${lockPath}) — nothing was written, retry the write`,
@@ -246,8 +341,15 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 	const write = (next: ContractFile): void => {
 		mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
 		const tmp = join(dirname(filePath), `.contract-${randomUUID()}.tmp`);
-		writeFileSync(tmp, `${JSON.stringify(next, null, "\t")}\n`, { mode: 0o600 });
-		renameSync(tmp, filePath);
+		try {
+			writeFileSync(tmp, `${JSON.stringify(next, null, "\t")}\n`, { mode: 0o600 });
+			renameSync(tmp, filePath);
+		} catch (error) {
+			// A failed write never leaves a contract body behind for a later
+			// loader (or an operator) to mistake for state.
+			rmSync(tmp, { force: true });
+			throw error;
+		}
 		file = next;
 	};
 

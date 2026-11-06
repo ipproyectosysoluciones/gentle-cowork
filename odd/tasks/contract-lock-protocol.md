@@ -48,8 +48,9 @@ la liberación deja de ser "borrar el path".
   limpia; no quedan huérfanos tras un reclamo fallido.
 - [x] **T4** [S5] Archivo `.lock` previo: holder vivo → se espera; holder muerto → se reclama.
 - [x] **T5** [S8] Fallo al publicar el `owner`: se libera sólo el directorio propio y no se
-  desplaza a nadie.
-- [ ] **T6** [S7] Suite completa + typecheck + verificación independiente (item de riesgo 4) y
+  desplaza a nadie. ✅ `b14f37f` + la corrección de W1 (el test que la pinnea llegó después
+  de que la verificación independiente refutara la versión original).
+- [x] **T6** [S7] Suite completa + typecheck + verificación independiente (item de riesgo 4) y
   revisión nativa antes de la entrega.
 
 ## Log
@@ -121,3 +122,41 @@ la liberación deja de ser "borrar el path".
   **R4-004** (rmdir que traga todos los errores) y **R4-005** (grace de 30s no
   configurable, preexistente) quedan como follow-up: ninguno cambia el veredicto de
   exclusión y el contenedor sin owner lo limpia el siguiente pasada tras el grace.
+
+- **L4** Verificación independiente (item 4) y lo que encontró. El verificador **refutó S1,
+  S2 y S8** con dos interleavings demonstrables sobre procesos reales, y tenía razón: los
+  dos se reducen a un solo error mío — `releaseLockContainer()` borraba el `owner` **por
+  path** sin comprobar de quién era.
+  **W1 (pérdida silenciosa):** un writer P hace `mkdir`, se cuelga más de 30 s antes de
+  publicar su `owner`; R reclama el contenedor abandonado y entra en la sección crítica; P
+  despierta, su publicación falla (`EEXIST`) y su cleanup **borra el `owner` y el
+  contenedor de R**; D entra mientras R sigue adentro. R y D adentro a la vez, y la
+  enmienda de D desaparece del changelog.
+  **W2 (pérdida silenciosa):** un snapshot "contenedor vacío y viejo" se vuelve obsoleto
+  (otro settler lo libera, un writer lo toma) y el `rmSync(ownerPath)` del release borra al
+  holder nuevo.
+  **W3:** un `taken-*` cuyo contenido no se puede leer quedaba invisible para el settle
+  (`viewLock` lo filtraba) → el contenedor no se podía liberar nunca.
+  **Corrección (una sola regla, tres aplicaciones):** la liberación de algo que **no**
+  verificamos como propio pasa a ser `retireEmptyContainer()` = **sólo `rmdir`**. `rmdir`
+  rechaza un contenedor donde alguien publicó, y ese rechazo es justamente el chequeo que
+  un borrado por path no puede hacer. `withLock` conserva la liberación con verificación de
+  token (ahí el `owner` es nuestro y la comparación precede al borrado). Además: los
+  `taken-*` se listan por **nombre** y su edad sale del contenedor cuando el contenido no
+  se puede leer, así que se limpian tras el grace; y un contenedor que **nosotros** acabamos
+  de limpiar se retira en el acto (no puede haber nadie en la ventana de creación, porque
+  publicar un owner exige que el contenedor no exista) — eso cierra el stall de 30 s de W6.
+  Tres tests nuevos y deterministas: W1 (publicación que falla con un `owner` ajeno
+  adentro), W2 (snapshot obsoleto con un holder fresco), W3 (`taken-*` ilegible por symlink
+  colgado). GREEN: `store.test.ts` 33/33.
+  **Lo que corrijo del registro anterior:** mi afirmación en L2 y en el PR ("`createLock`
+  ya no compara snapshots: libera sólo el contenedor propio") era **falsa tal como estaba
+  escrita** y encima T5 [S8] estaba tildada sin test que la cubriera. Ahora sí es cierta y
+  está pinneada.
+  **Residuales que quedan, con su clase:** W4 (un `taken-*` que nombra el pid vivo de un no
+  holder queda hasta que ese proceso muera: basura, no corrupción), W5 (un "owner fantasma"
+  restaurado para un proceso que ya salió de la sección crítica bloquea escrituras hasta que
+  muera: disponibilidad, no pérdida), y el caveat heredado de que `process.kill(pid, 0)` sólo
+  vale dentro de un mismo PID namespace. El hazard de S5 quedó **peor de lo que escribí**:
+  una versión previa no pierde datos contra el directorio, pero **no puede escribir** —
+  el rollout conjunto no es recomendación, es requisito operativo.

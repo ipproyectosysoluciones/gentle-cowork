@@ -124,3 +124,22 @@ revisión** (lección del beta) · Runner: Vitest.
   implementation -> **29/29** focused; suite **243 passed | 3 todo (246)**;
   `pnpm run typecheck` exit 0; authored size at the ~400 norm with the boundary
   recorded in the same commit, as `AGENTS.md` requires.
+- **L16-c (2026-11-06, chain slice C — lock lifecycle):** The lock from slice B could
+  stay held by a dead process and, worse, the age-based reclaim its first version
+  carried (mtime older than 60s) stole the lock from a holder that was **alive but
+  slow**: two writers both reported `ok` at version 2 and one amendment was lost --
+  the same R4-CONCURRENT-WRITE loss, now with two honest successes (the independent
+  verifier found it and failed that commit). This slice closes the cycle: reclaim
+  happens **only** when the lock's pid is provably gone on this host (`ESRCH`), never
+  by elapsed time; an unreadable owner (0 bytes after a SIGKILL between `openSync`
+  and `writeFileSync`, or garbage) is reclaimed only past
+  `LOCK_UNREADABLE_GRACE_MS`, because there is no liveness to consult and without it
+  the store wedged forever for writes; `removeLockIfUnchanged` re-reads owner **and**
+  mtime immediately before each deletion and aborts when the file changed, so two
+  waiters reclaiming the same dead lock cannot delete each other's fresh lock; an
+  ownership read right after creation closes that race for the holder; and a failed
+  `rename` no longer leaves the contract body in a `.tmp` beside the store. TDD: RED
+  2 failed / 23 passed (0-byte and `not-a-pid` shapes) -> **25/25**; suite **239
+  passed | 3 todo (242)**; `pnpm run typecheck` exit 0. The independent verifier also
+  ran a mutation check (assuming a dead owner without probing makes the live-holder
+  test fail), so the test is not vacuous.

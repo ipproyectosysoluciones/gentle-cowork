@@ -98,10 +98,11 @@ la liberación deja de ser "borrar el path".
   así que no hay datos que migrar. El sentido inverso sí se tolera: un `<file>.lock` de
   archivo regular (artefacto previo o crash) se reclama con las reglas viejas.
 
-  **Frontera del slice:** ~300 líneas propias en `store.ts` y ~120 en tests (570 líneas de
-  diff contando reemplazos). Se entrega como **una** unidad: partir el protocolo dejaría el
-  árbol con la liberación vieja y el contenedor nuevo, un estado intermedio roto. Decisión
-  registrada acá, en el mismo commit (AGENTS.md, norma del slice).
+  **Frontera del slice:** la unidad quedó en **600 líneas autoradas** en 3 commits (protocolo,
+  tests, hardening R4-003), por encima de la norma ~400. Se entrega como **una** unidad y un
+  solo PR (#71): partir el protocolo dejaría el árbol con la liberación vieja y el contenedor
+  nuevo, un estado intermedio roto, y no hay un corte natural dentro de un cambio de
+  protocolo. Decisión registrada acá, en el mismo commit (AGENTS.md, norma del slice).
 
 - **L3** Revisión nativa del rediseño (`review-bd4d13b3eb483bf5`, tres lentes, 3 corridas de
   modelo): cerró **`escalated`** por causalidad desconocida, con dos CRITICAL y el resto

@@ -54,13 +54,17 @@ revisión** (lección del beta) · Runner: Vitest.
 - [x] **T5** [S6] auditoría de cobertura de entradas del gate ANTES de la revisión
   nativa: árbol limpio, candidato 7 archivos/1021 líneas contra `origin/dev`, suite
   222 tests sobre ese árbol, typecheck limpio. ✅ (evidencia en L7)
-- [ ] **T6** [S6] revisión nativa de la unidad 6.1 — **BLOQUEADA POR EL PROVEEDOR**: linaje
-  `review-eced5971081701cc` abierto (medium, risk/resilience/reliability), los 3
-  slots reofrecidos intactos. El bloqueo migró del 404 del relay (L7) al **401 de
-  auth del relay de revisores** (L12: la API key no tiene acceso al modelo
-  solicitado). Reanudación: STATUS fresco del linaje + captura del binding
-  reofrecido, cuando el acceso al modelo del relé esté restablecido. No bloquea la
-  entrega (assess previo: medium, reviewDue false).
+- [x] **T6** [S6] revisión nativa de la unidad 6.1 — **CERRADA sobre el código
+  corregido**: el linaje original `review-eced5971081701cc` quedó en
+  `correction_required` (3 CRITICAL de una sola raíz: check-then-write sin
+  exclusión mutua) y su candidato congelado está superado; el sucesor
+  `review-5c3f8ad41b7e26d9` congeló el primer intento de arreglo, el que el
+  verificador independiente rechazó (L17). La revisión se cerró sobre el arreglo
+  aterrizado, con linaje nuevo `review-b7d218ea422b2de9` (medium,
+  risk/resilience/reliability; base `661121de` árbol `54d12e67` → `dev` `0c3f4d7`
+  árbol `d7a08e9`; 9 archivos, 2269 líneas): 3/3 lentes admitidas, `approved`, sin
+  corrección, 7 hallazgos informativos no bloqueantes; autoridad **quemada**
+  (`gentle-ai.review-acknowledged/v1`). ✅ (evidencia en L20)
 
 ### Slice 6.2 — motor de interpretación
 
@@ -387,3 +391,33 @@ revisión** (lección del beta) · Runner: Vitest.
   **Follow-up:** #65 records the residual race in the stale-lock reclaim
   (`removeLockIfUnchanged` is compare-then-delete, `store.ts:197-205`), which the verifier
   rated important but not a blocker.
+- **L20 (2026-11-06, the 6.1 native review closes over the landed fix):** the lineage the
+  owner named, `review-eced5971081701cc`, is terminally `correction_required`: its three
+  lenses and its refuter are admitted, `fix_finding_ids` names the three CRITICALs from one
+  root (R1-001 / R3-001 / R4-CONCURRENT-WRITE), and `fix_delta_hash` is still the hash of the
+  empty string — no correction was ever recorded inside it. Its frozen candidate (`c64eaba3`)
+  and the successor that `review recover` produced (`review-5c3f8ad41b7e26d9`, candidate
+  `48c4d45d`) both predate the fix that actually landed, and the bounded correction
+  (200 lines) cannot cover ~1200 lines of landed fix, so neither lineage can validate the
+  delivered bytes. Both stay as historical records; delivery does not depend on them.
+  **The review ran over the corrected, landed candidate instead:** fresh lineage
+  `review-b7d218ea422b2de9` (medium; risk + resilience + reliability; base tree `54d12e67`
+  → candidate tree `d7a08e9`; 9 files, 2269 lines, correction budget 200). The forecast was
+  three host-relay reviewer runs (prompt 118,179 / 118,193 / 118,204 bytes) and all three
+  executed on the first attempt — the relay repair of L15 holds. Result: **`approved`** with
+  **no correction transition offered**, seven advisory findings, none blocking:
+  `R3-STORE-LOCK-RECLAIM-RACE` (`store.ts:197-205`) — the same residual race already filed as
+  #65; `R4-001` (`store.ts:167-180`), `R4-002` (`store.ts:52`), `R4-003` (`store.ts:53`),
+  `R4-004` (`store.ts:112-125`), `R4-005` (`store.ts:192-220`) and `R4-006`
+  (`interpreter.ts:77-165`). Acknowledgement burned the authority
+  (`burn_evidence: gentle-ai.review-acknowledged/v1`, target `sha256:fca91059…`), so delivery
+  follows ordinary repository policy: nothing is merged, pushed or released by the review.
+  **Plumbing learned (both cost a failed call):** a bound `review.status` needs
+  `input {baseRef, committedOnly:true}` — without it the facade resolves the worktree scope,
+  answers `applicability: unrelated` and offers a spurious fresh start with a wrong untracked
+  selection. And the provider expresses its base as a **tree** (`54d12e67`, carried by commits
+  `661121de` / `da31db7` / `bb05ecc`); `inspect` and `start` reject that as `baseRef`
+  (`base-ref-unresolvable`) — pass the commit that carries the tree, which yields the same
+  target identity.
+  **Follow-up:** `R4-006` is a new open item (interpreter `buildTaskContracts` 77-165) and
+  joins #65 as advisory work, not as a re-review of this candidate.

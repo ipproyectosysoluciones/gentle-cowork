@@ -240,6 +240,62 @@ revisión** (lección del beta) · Runner: Vitest.
   la corrección en el mismo commit; el linaje sucesor se re-scopea sobre este
   HEAD para revisar el código arreglado. Follow-ups abiertos: R3-004/R3-005
   (`schema.ts:123`, `schema.ts:250`) y R3-006 (`schema.test.ts:106-129`).
+- **L16-a (2026-11-06, native review of 6.1 -> correction chain, slice A):** The review
+  of lineage `review-eced5971081701cc` — the three-lens group plus refuter, the first
+  run after the reviewer relay was repaired — found **3 CRITICALs from a single root**:
+  `draft`/`amend` did check-then-write with no mutual exclusion, so two processes
+  pinning the same `expectedVersion` both passed the check and the second `rename`
+  silently discarded the contract and its changelog entry. Six WARNINGs came with
+  them. The full record lives on `feat/phase6-interpretation` (L16/L17); this chain
+  delivers it split to the ~400 norm. **Slice A closes the changelog-integrity
+  warning:** `load` only verified that `changelog` was an array and then cast it, so
+  null or misaligned entries loaded and were written forward by the next amendment.
+  `parseChangelog` now validates entry by entry (object, positive integer `version`,
+  string `at`/`summary`, exactly the `1..N` sequence, last entry equal to `version`,
+  never empty) and the validated contract is cloned before caching and returning it,
+  so a caller cannot mutate stored state through its own reference. TDD: 7 new tests
+  (6 rejections plus one proving every shape the store writes still loads); suite
+  **229 passed | 3 todo (232)**; `pnpm run typecheck` exit 0; **115 insertions / 8
+  deletions**, within the norm. The chain is based on `origin/dev` on purpose:
+  `store.ts` and `store.test.ts` are byte-identical between `dev` and the reviewed
+  candidate, so this carries no unreviewed 6.2 code (6.2 is not in `dev`).
+- **L16-b (2026-11-06, chain slice B):** The write lock with an owner.
+  `draft`/`amend` ran `load -> version check -> update -> rename` with no critical
+  section at all: two processes pinning the same `expectedVersion` both passed the
+  check and the second `rename` silently discarded the contract and its changelog
+  entry (the 3 CRITICALs R1-001 / R3-001 / R4-CONCURRENT-WRITE). Every write now
+  takes `<contract.json>.lock`, created with `openSync(..., "wx", 0o600)` and
+  carrying `pid:token`; the version check, the update and the rename are one
+  section; the loser gets `ContractStoreBusyError` naming the lock path (wait
+  bounded by the new `lockTimeoutMs` option) instead of being discarded silently;
+  and release **verifies the on-disk token** before deleting, so a writer that lost
+  the lock never deletes the new holder's. A throwing update callback releases the
+  lock in `finally`. This slice deliberately does NOT reclaim locks left by dead
+  processes: that, together with the grace window for unreadable owners and the safe
+  cleanup, is slice C (the boundary decision is recorded here because the cut falls
+  inside the same file). TDD: RED 4 failed / 17 passed against the previous
+  implementation -> **29/29** focused; suite **243 passed | 3 todo (246)**;
+  `pnpm run typecheck` exit 0; authored size at the ~400 norm with the boundary
+  recorded in the same commit, as `AGENTS.md` requires.
+- **L16-c (2026-11-06, chain slice C — lock lifecycle):** The lock from slice B could
+  stay held by a dead process and, worse, the age-based reclaim its first version
+  carried (mtime older than 60s) stole the lock from a holder that was **alive but
+  slow**: two writers both reported `ok` at version 2 and one amendment was lost --
+  the same R4-CONCURRENT-WRITE loss, now with two honest successes (the independent
+  verifier found it and failed that commit). This slice closes the cycle: reclaim
+  happens **only** when the lock's pid is provably gone on this host (`ESRCH`), never
+  by elapsed time; an unreadable owner (0 bytes after a SIGKILL between `openSync`
+  and `writeFileSync`, or garbage) is reclaimed only past
+  `LOCK_UNREADABLE_GRACE_MS`, because there is no liveness to consult and without it
+  the store wedged forever for writes; `removeLockIfUnchanged` re-reads owner **and**
+  mtime immediately before each deletion and aborts when the file changed, so two
+  waiters reclaiming the same dead lock cannot delete each other's fresh lock; an
+  ownership read right after creation closes that race for the holder; and a failed
+  `rename` no longer leaves the contract body in a `.tmp` beside the store. TDD: RED
+  2 failed / 23 passed (0-byte and `not-a-pid` shapes) -> **25/25**; suite **239
+  passed | 3 todo (242)**; `pnpm run typecheck` exit 0. The independent verifier also
+  ran a mutation check (assuming a dead owner without probing makes the live-holder
+  test fail), so the test is not vacuous.
 - **L17 (2026-11-06, la verificación independiente FAILA el primer arreglo — y el
   arreglo se rehace):** el verificador independiente (item de riesgo 4,
   concurrency) corrió el commit `55ddcb2` con dos experimentos reales de 6
@@ -304,59 +360,3 @@ revisión** (lección del beta) · Runner: Vitest.
   con `active: nan-full-power` y las seis claves `review-*` en
   `nan/deepseek-v4-flash`. La corrección del relay va **allí** (models.json +
   perfil activo), no en el agent home, y exige reiniciar el proceso.
-- **L16-a (2026-11-06, native review of 6.1 -> correction chain, slice A):** The review
-  of lineage `review-eced5971081701cc` — the three-lens group plus refuter, the first
-  run after the reviewer relay was repaired — found **3 CRITICALs from a single root**:
-  `draft`/`amend` did check-then-write with no mutual exclusion, so two processes
-  pinning the same `expectedVersion` both passed the check and the second `rename`
-  silently discarded the contract and its changelog entry. Six WARNINGs came with
-  them. The full record lives on `feat/phase6-interpretation` (L16/L17); this chain
-  delivers it split to the ~400 norm. **Slice A closes the changelog-integrity
-  warning:** `load` only verified that `changelog` was an array and then cast it, so
-  null or misaligned entries loaded and were written forward by the next amendment.
-  `parseChangelog` now validates entry by entry (object, positive integer `version`,
-  string `at`/`summary`, exactly the `1..N` sequence, last entry equal to `version`,
-  never empty) and the validated contract is cloned before caching and returning it,
-  so a caller cannot mutate stored state through its own reference. TDD: 7 new tests
-  (6 rejections plus one proving every shape the store writes still loads); suite
-  **229 passed | 3 todo (232)**; `pnpm run typecheck` exit 0; **115 insertions / 8
-  deletions**, within the norm. The chain is based on `origin/dev` on purpose:
-  `store.ts` and `store.test.ts` are byte-identical between `dev` and the reviewed
-  candidate, so this carries no unreviewed 6.2 code (6.2 is not in `dev`).
-- **L16-b (2026-11-06, chain slice B):** The write lock with an owner.
-  `draft`/`amend` ran `load -> version check -> update -> rename` with no critical
-  section at all: two processes pinning the same `expectedVersion` both passed the
-  check and the second `rename` silently discarded the contract and its changelog
-  entry (the 3 CRITICALs R1-001 / R3-001 / R4-CONCURRENT-WRITE). Every write now
-  takes `<contract.json>.lock`, created with `openSync(..., "wx", 0o600)` and
-  carrying `pid:token`; the version check, the update and the rename are one
-  section; the loser gets `ContractStoreBusyError` naming the lock path (wait
-  bounded by the new `lockTimeoutMs` option) instead of being discarded silently;
-  and release **verifies the on-disk token** before deleting, so a writer that lost
-  the lock never deletes the new holder's. A throwing update callback releases the
-  lock in `finally`. This slice deliberately does NOT reclaim locks left by dead
-  processes: that, together with the grace window for unreadable owners and the safe
-  cleanup, is slice C (the boundary decision is recorded here because the cut falls
-  inside the same file). TDD: RED 4 failed / 17 passed against the previous
-  implementation -> **29/29** focused; suite **243 passed | 3 todo (246)**;
-  `pnpm run typecheck` exit 0; authored size at the ~400 norm with the boundary
-  recorded in the same commit, as `AGENTS.md` requires.
-- **L16-c (2026-11-06, chain slice C — lock lifecycle):** The lock from slice B could
-  stay held by a dead process and, worse, the age-based reclaim its first version
-  carried (mtime older than 60s) stole the lock from a holder that was **alive but
-  slow**: two writers both reported `ok` at version 2 and one amendment was lost --
-  the same R4-CONCURRENT-WRITE loss, now with two honest successes (the independent
-  verifier found it and failed that commit). This slice closes the cycle: reclaim
-  happens **only** when the lock's pid is provably gone on this host (`ESRCH`), never
-  by elapsed time; an unreadable owner (0 bytes after a SIGKILL between `openSync`
-  and `writeFileSync`, or garbage) is reclaimed only past
-  `LOCK_UNREADABLE_GRACE_MS`, because there is no liveness to consult and without it
-  the store wedged forever for writes; `removeLockIfUnchanged` re-reads owner **and**
-  mtime immediately before each deletion and aborts when the file changed, so two
-  waiters reclaiming the same dead lock cannot delete each other's fresh lock; an
-  ownership read right after creation closes that race for the holder; and a failed
-  `rename` no longer leaves the contract body in a `.tmp` beside the store. TDD: RED
-  2 failed / 23 passed (0-byte and `not-a-pid` shapes) -> **25/25**; suite **239
-  passed | 3 todo (242)**; `pnpm run typecheck` exit 0. The independent verifier also
-  ran a mutation check (assuming a dead owner without probing makes the live-holder
-  test fail), so the test is not vacuous.

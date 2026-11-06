@@ -200,6 +200,110 @@ revisión** (lección del beta) · Runner: Vitest.
   encontrado:** `~/.codex/config.toml` tiene `model = "gpt-6-sol"` y la cuenta ChatGPT
   rechaza `gpt-6-sol`, `gpt-5.3-codex` y `gpt-5.2-codex` ("not supported when using Codex
   with a ChatGPT account") → el CLI `codex` del entorno está roto hasta repuntarlo.
+- **L16 (2026-11-06, la revisión nativa del 6.1 vuelve a correr — y encuentra un
+  defecto real):** con el relay reparado (L15) y el proceso relanzado, STATUS
+  fresco + binding reofrecido ejecutan por fin el **grupo de 3 lentes**
+  (`review-eced5971081701cc`, risk/resilience/reliability): 3/3 admitidos. El
+  refuter cierra en `correction_required` con **3 CRITICAL de una sola raíz** y 6
+  WARNING: `draft`/`amend` hacen *check-then-write* sin lock ni compare-and-swap
+  (`store.ts:129-162`) — dos procesos con la misma `expectedVersion` pasan ambos
+  el chequeo y el segundo `rename` descarta en silencio contrato y changelog
+  (R1-001, R3-001, R4-CONCURRENT-WRITE); y `load` sólo verificaba que `changelog`
+  fuera un array y lo casteaba, así que entradas nulas o desalineadas se
+  cargaban y se reescribían hacia adelante (R3-002, R4-CHANGELOG-UNVALIDATED).
+  El candidato revisado (`c64eaba3`) y el HEAD actual (`48c4d45d`) son **idénticos
+  byte a byte** en `store.ts`/`schema.ts`/`fixtures.ts`: el defecto está en
+  `dev`, no sólo en el linaje.
+  **Lección de plumbing:** `gentle_review` con `--lineage` pero sin
+  `input: {baseRef, committedOnly}` resuelve el scope sucio del worktree y
+  responde `applicability: unrelated` + un `start` fresco con una selección de
+  untracked espuria (`payload.json`, archivo suelto del dueño); con el `baseRef`
+  del linaje responde bien. **Defecto de harness:** `recover` por el facade
+  falla determinista con `native-status-unavailable / schema-incompatible` (su
+  lectura interna de `review/status`) mientras el binario nativo 4.3.1 responde
+  v9 sin problema (exit 0); ejecutado por CLI, `review recover` crea el sucesor
+  `review-5c3f8ad41b7e26d9` (target `051963f1…`, `scope_changed`, 10 archivos,
+  1780 líneas, budget 200) con **authorization auto-registrada** — el paso de
+  aprobación del binding nunca se renderiza. Reportar upstream.
+  **Decisión del dueño:** arreglar los CRITICAL **antes** de volver a correr las
+  lentes (re-descubrir lo ya sabido quema 3 corridas). Corrección aplicada:
+  lock file `contract.json.lock` (O_EXCL, timeout configurable, reclamo por
+  staleness a 60s) envolviendo `load → check → update → rename` como una sola
+  sección crítica, `ContractStoreBusyError` para el perdedor, `withLock` con
+  `finally`, validación estricta del changelog en `load` (entradas objeto,
+  `version` entero positivo, `at`/`summary` string, última entrada == `version`)
+  y clones defensivos del contrato validado. TDD observado: **RED 8 fallos / 9
+  pasan → GREEN 17/17** (`src/contract/store.test.ts`); suite **257 passed | 3
+  todo (260)**; `pnpm run typecheck` limpio (exit 0 — ojo: `AGENTS.md` manda
+  `tsc -p packages/daemon`, ruta que en este repo no existe); `git diff
+  --shortstat` = 296 inserciones, dentro de la norma ~400. El registro viaja con
+  la corrección en el mismo commit; el linaje sucesor se re-scopea sobre este
+  HEAD para revisar el código arreglado. Follow-ups abiertos: R3-004/R3-005
+  (`schema.ts:123`, `schema.ts:250`) y R3-006 (`schema.test.ts:106-129`).
+- **L17 (2026-11-06, la verificación independiente FAILA el primer arreglo — y el
+  arreglo se rehace):** el verificador independiente (item de riesgo 4,
+  concurrency) corrió el commit `55ddcb2` con dos experimentos reales de 6
+  procesos `tsx` y reprodujo los números del commit (17/17, 257|3, typecheck
+  limpio) — pero encontró dos **blockers de la misma raíz**: **B1** el reclamo
+  del lock por *mtime* > 60s (`breakStaleLock`) corría **antes** del chequeo de
+  deadline, así que un holder vivo pero lento tenía el lock robado; medido: dos
+  writers reportaban `ok` en v2 y sólo una enmienda sobrevivía — exactamente la
+  pérdida de R4-CONCURRENT-WRITE, ahora con dos éxitos honestos, alcanzable con
+  opciones por defecto. **B2** el release era `rmSync(force)` incondicional: el
+  holder robado **borraba el lock del ladrón** (demostrado). Más W1 (lock
+  huérfano si `writeFileSync` falla tras el `openSync`), W2 (el `.tmp` con el
+  cuerpo del contrato quedaba en el directorio si `renameSync` fallaba) y W3
+  (la validación ataba sólo la **última** entrada al `version`: `[v9, v1]` y
+  `[1, 1]` cargaban). Los tests del primer commit no podían detectarlo: el
+  reclamo no tenía costura inyectable ni cobertura.
+  **Diseño corregido:** el lock lleva dueño `pid:token`; el reclamo ocurre
+  **sólo** cuando el pid es demostrablemente inexistente (`ESRCH`) — el tiempo
+  transcurrido no es evidencia de muerte —; el release verifica que el token en
+  disco sea el propio (un writer que perdió el lock no borra el del nuevo
+  dueño); una lectura de propiedad inmediatamente posterior a la creación cierra
+  la carrera entre dos waiters que reclaman el mismo lock muerto; el changelog
+  debe ser exactamente `1..N` y coincidir con el `version`; el `.tmp` se borra
+  si la escritura falla. TDD observado en orden: **RED 4 fallos / 17 pasan**
+  (los 4 tests nuevos contra la implementación de `55ddcb2`) → **GREEN 21/21**;
+  suite **261 passed | 3 todo (264)**; `pnpm run typecheck` limpio. `git diff
+  --shortstat` del arreglo: dentro de la norma ~400. Pendiente: **una** re-corrida
+  del verificador (regla de corrección acotada: una tanda, un rechequeo) y el
+  grupo de lentes sobre el candidato corregido.
+- **L18 (2026-11-06, RDD del slice 6.2 CERRADO — aprobación reconocida, sin
+  corridas nuevas):** el linaje `review-8eafdb6eb5115387` (medium, lentes
+  readability + reliability, committed-only `067b7f1..8a7f676`, 722 líneas, 4
+  archivos) estaba en `approved` con sus dos resultados de lente capturados y sin
+  blocker severo: ninguno de los 8 intentos bloqueados perdió un slot. Para
+  reconocerlo hay que **reproducir el árbol congelado** (`8a7f676` es el árbol de
+  `ffe1c45`): con el worktree en ese árbol, `review.status` + `input {baseRef,
+  committedOnly:true}` devuelve `applicability: current_target` y
+  `approved_acknowledgement_required`; `acknowledge-approved` con `lineageId` y
+  **sin** `input` (el facade rechaza input como `controller-only-input`) responde
+  `native-approved-acknowledgement-completed`: autoridad **quemada**
+  (`burn_evidence: gentle-ai.review-acknowledged/v1`), target `sha256:c511f0cf…`,
+  delivery por política ordinaria del repo. El código revisado es el que se
+  entrega: `interpreter.ts` e `interpreter.test.ts` son byte-idénticos entre
+  `8a7f676` y el tip de la rama del slice.
+  **Corrección de registro:** el PR #61 **nunca** publicó los dos commits del
+  primer arreglo de lock (`55ddcb2`, `719e78a`) — su head remoto era `cc40eac`.
+  Esos dos commits viven sólo en la copia local de la rama y están superados por
+  la cadena #62-#64; el registro L16/L17 que sólo existía allí viaja ahora por
+  este PR como cambio de documentación, sin publicar ese código.
+  **Causa raíz del relay de revisores (medida, con path:line):**
+  `subagents.json` es un archivo **derivado** — se reescribe en cada
+  `session_start` (`applySavedModelConfig` `gentle-ai.ts:11633` →
+  `applyModelConfigAsync` `:3089` → `updateSubagentModelProfileAtPathAsync`
+  `:2879`) y `applyModelConfigAsync` saltea `PROVIDER_REVIEW_ROLES` (`:3097`),
+  que son sólo `review-refuter`/`review-validator`. Por eso refuter y validator
+  conservaban lo editado a mano mientras las cuatro lentes volvían a
+  `nan/deepseek-v4-flash`. El modelo del revisor no sale de ahí:
+  `readReviewerModelConfig` (`:2520`) y `reviewHostRelaySelection` (`:2741`) leen
+  la autoridad de routing — `<config home>/models.json` y, por encima de ella, el
+  perfil congelado al arrancar. En esta máquina el config home es
+  `~/.gentle-shell/config/gentle-ai` (`GENTLE_SHELL_PREFIX=/home/bladimir/.gentle-shell`),
+  con `active: nan-full-power` y las seis claves `review-*` en
+  `nan/deepseek-v4-flash`. La corrección del relay va **allí** (models.json +
+  perfil activo), no en el agent home, y exige reiniciar el proceso.
 - **L16-a (2026-11-06, native review of 6.1 -> correction chain, slice A):** The review
   of lineage `review-eced5971081701cc` — the three-lens group plus refuter, the first
   run after the reviewer relay was repaired — found **3 CRITICALs from a single root**:

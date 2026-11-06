@@ -72,6 +72,47 @@ export interface ContractStore {
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/**
+ * A corrupt envelope never loads: every changelog entry is validated and must
+ * agree with the persisted version, or an amendment would write malformed
+ * audit history forward instead of failing closed.
+ */
+const parseChangelog = (raw: unknown, version: number): ChangelogEntry[] => {
+	if (!Array.isArray(raw)) {
+		throw new ContractValidationError(["changelog: required array"]);
+	}
+	if (raw.length === 0) {
+		throw new ContractValidationError(["changelog: required at least one entry for the persisted version"]);
+	}
+	const entries = raw.map((entry, index): ChangelogEntry => {
+		if (!isObject(entry)) {
+			throw new ContractValidationError([`changelog[${index}]: expected an object`]);
+		}
+		if (typeof entry.version !== "number" || !Number.isInteger(entry.version) || entry.version < 1) {
+			throw new ContractValidationError([`changelog[${index}].version: required positive integer`]);
+		}
+		if (typeof entry.at !== "string") {
+			throw new ContractValidationError([`changelog[${index}].at: required string`]);
+		}
+		if (typeof entry.summary !== "string") {
+			throw new ContractValidationError([`changelog[${index}].summary: required string`]);
+		}
+		// One entry per version, in order: a gap or a duplicate is corruption, not
+		// history to carry forward.
+		if (entry.version !== index + 1) {
+			throw new ContractValidationError([`changelog[${index}].version: expected ${index + 1}`]);
+		}
+		return { version: entry.version, at: entry.at, summary: entry.summary };
+	});
+	const last = entries[entries.length - 1] as ChangelogEntry;
+	if (last.version !== version) {
+		throw new ContractValidationError([
+			`changelog: last entry is version ${last.version} but the envelope holds ${version}`,
+		]);
+	}
+	return entries;
+};
+
 export function openContractStore(filePath: string): ContractStore {
 	let file: ContractFile | undefined;
 
@@ -92,15 +133,15 @@ export function openContractStore(filePath: string): ContractStore {
 		if (typeof raw.version !== "number" || !Number.isInteger(raw.version) || raw.version < 0) {
 			throw new ContractValidationError(["version: required non-negative integer"]);
 		}
-		if (!Array.isArray(raw.changelog)) {
-			throw new ContractValidationError(["changelog: required array"]);
-		}
+		// A corrupt envelope never loads: the changelog is validated entry by entry
+		// and must agree with the persisted version.
+		const changelog = parseChangelog(raw.changelog, raw.version);
 		// Fail closed: migration and validation errors propagate to the caller.
 		const contract = migrateProjectContract(raw.contract);
 		file = {
 			storeSchema: raw.storeSchema,
 			version: raw.version,
-			changelog: raw.changelog as ContractFile["changelog"],
+			changelog,
 			contract,
 		};
 	};
@@ -137,10 +178,11 @@ export function openContractStore(filePath: string): ContractStore {
 				storeSchema: `${CONTRACT_STORE_SCHEMA}/v${CONTRACT_STORE_VERSION}`,
 				version: 1,
 				changelog: [{ version: 1, at: new Date().toISOString(), summary }],
-				contract: validateProjectContract(contract),
+				// A copy: a caller mutating its own object can never edit what is cached here.
+				contract: structuredClone(validateProjectContract(contract)),
 			};
 			write(next);
-			return (this as { get(): ContractFile | undefined }).get() as ContractFile;
+			return structuredClone(next);
 		},
 		amend(summary, update, expectedVersion) {
 			load();
@@ -157,10 +199,10 @@ export function openContractStore(filePath: string): ContractStore {
 				...file,
 				version: file.version + 1,
 				changelog: [...file.changelog, { version: file.version + 1, at: new Date().toISOString(), summary }],
-				contract: updated,
+				contract: structuredClone(updated),
 			};
 			write(next);
-			return (this as { get(): ContractFile | undefined }).get() as ContractFile;
+			return structuredClone(next);
 		},
 	};
 }

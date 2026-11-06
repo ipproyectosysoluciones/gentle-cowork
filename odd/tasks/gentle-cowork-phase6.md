@@ -87,3 +87,22 @@ revisión** (lección del beta) · Runner: Vitest.
   typecheck + auditoría. Pendiente upstream: reparar el relay del revisor
   (pistas: gentle-shell#2355, #63).
 - L8-a (2026-10-24, lección de aterrizaje — corrección del maintainer): El PR de aterrizaje agregado (#51, chained/t59-delivery → dev, rebase) mostró +9.706 en el libro de GitHub aunque los 13 slices se revisaron a ~400 c/u — la disciplina se cumplió en la REVISIÓN pero se violó en el ATERRIZAJE. Regla incorporada: **stacked-to-dev con re-apuntado por merge** — cada PR de la pila apunta a `dev`; al mergearse el eslabón N, el N+1 se re-apunta a `dev` (su diff pasa a mostrar solo su slice) — **nunca un PR agregador de aterrizaje**. Aplicado a la cadena 6.1 (#58 → #59 → #60, protocolo comentado en cada PR).
+- **L16-a (2026-11-06, native review of 6.1 -> correction chain, slice A):** The review
+  of lineage `review-eced5971081701cc` — the three-lens group plus refuter, the first
+  run after the reviewer relay was repaired — found **3 CRITICALs from a single root**:
+  `draft`/`amend` did check-then-write with no mutual exclusion, so two processes
+  pinning the same `expectedVersion` both passed the check and the second `rename`
+  silently discarded the contract and its changelog entry. Six WARNINGs came with
+  them. The full record lives on `feat/phase6-interpretation` (L16/L17); this chain
+  delivers it split to the ~400 norm. **Slice A closes the changelog-integrity
+  warning:** `load` only verified that `changelog` was an array and then cast it, so
+  null or misaligned entries loaded and were written forward by the next amendment.
+  `parseChangelog` now validates entry by entry (object, positive integer `version`,
+  string `at`/`summary`, exactly the `1..N` sequence, last entry equal to `version`,
+  never empty) and the validated contract is cloned before caching and returning it,
+  so a caller cannot mutate stored state through its own reference. TDD: 7 new tests
+  (6 rejections plus one proving every shape the store writes still loads); suite
+  **229 passed | 3 todo (232)**; `pnpm run typecheck` exit 0; **115 insertions / 8
+  deletions**, within the norm. The chain is based on `origin/dev` on purpose:
+  `store.ts` and `store.test.ts` are byte-identical between `dev` and the reviewed
+  candidate, so this carries no unreviewed 6.2 code (6.2 is not in `dev`).

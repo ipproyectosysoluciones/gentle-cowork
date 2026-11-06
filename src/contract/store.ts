@@ -11,11 +11,24 @@
  * a changelog entry (version, timestamp, summary); a caller can pin the
  * version it saw (`expectedVersion`) and a stale pin raises
  * ContractVersionConflict instead of overwriting. Multi-node fencing rides
- * the blackboard lease when slice 6.2 wires interpretation; this store keeps
- * single-writer correctness with the version counter.
+ * the blackboard lease when slice 6.2 wires interpretation; for the
+ * multi-process writers this store advertises through `refresh()`, every
+ * write holds the store's lock file — the version check and the rename are
+ * one critical section, so a writer either lands its amendment or is told it
+ * lost (ContractVersionConflict / ContractStoreBusyError), never silently
+ * discarded.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import {
 	type ProjectContract,
@@ -48,6 +61,19 @@ export class ContractVersionConflict extends Error {
 	}
 }
 
+/** Another process holds the store lock; nothing was written. */
+export class ContractStoreBusyError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ContractStoreBusyError";
+	}
+}
+
+export interface ContractStoreOptions {
+	/** How long a write waits for the store lock before failing. Default 5000ms. */
+	lockTimeoutMs?: number;
+}
+
 export interface ContractStore {
 	readonly filePath: string;
 	/** The current file snapshot (a copy), or undefined before the first draft. */
@@ -72,11 +98,13 @@ export interface ContractStore {
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/**
- * A corrupt envelope never loads: every changelog entry is validated and must
- * agree with the persisted version, or an amendment would write malformed
- * audit history forward instead of failing closed.
- */
+const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
+const LOCK_RETRY_MS = 10;
+
+const sleepSync = (ms: number): void => {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
 const parseChangelog = (raw: unknown, version: number): ChangelogEntry[] => {
 	if (!Array.isArray(raw)) {
 		throw new ContractValidationError(["changelog: required array"]);
@@ -97,8 +125,8 @@ const parseChangelog = (raw: unknown, version: number): ChangelogEntry[] => {
 		if (typeof entry.summary !== "string") {
 			throw new ContractValidationError([`changelog[${index}].summary: required string`]);
 		}
-		// One entry per version, in order: a gap or a duplicate is corruption, not
-		// history to carry forward.
+		// One entry per version, in order: a gap or a duplicate is corruption, and
+		// an amendment would otherwise write the malformed history forward.
 		if (entry.version !== index + 1) {
 			throw new ContractValidationError([`changelog[${index}].version: expected ${index + 1}`]);
 		}
@@ -113,8 +141,76 @@ const parseChangelog = (raw: unknown, version: number): ChangelogEntry[] => {
 	return entries;
 };
 
-export function openContractStore(filePath: string): ContractStore {
+export function openContractStore(filePath: string, options: ContractStoreOptions = {}): ContractStore {
+	const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+	const lockPath = `${filePath}.lock`;
 	let file: ContractFile | undefined;
+
+	/** The lock owner as written in the lock file (`pid:token`), or undefined. */
+	const readLockOwner = (): string | undefined => {
+		try {
+			return readFileSync(lockPath, "utf8").split("\n")[0]?.trim() || undefined;
+		} catch {
+			return undefined;
+		}
+	};
+
+	/** Takes the lock if it is free; never leaves an unowned lock behind. */
+	const createLock = (token: string): boolean => {
+		let fd: number;
+		try {
+			fd = openSync(lockPath, "wx", 0o600);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+				throw error;
+			}
+			return false;
+		}
+		try {
+			writeFileSync(fd, `${token}\n`);
+		} catch (error) {
+			closeSync(fd);
+			rmSync(lockPath, { force: true });
+			throw error;
+		}
+		closeSync(fd);
+		return true;
+	};
+
+	const acquireLock = (): string => {
+		mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
+		const token = `${process.pid}:${randomUUID()}`;
+		const deadline = Date.now() + lockTimeoutMs;
+		for (;;) {
+			// The ownership read after creation closes the reclaim race between two
+			// waiters: a writer that finds someone else's token does not proceed.
+			if (createLock(token) && readLockOwner() === token) {
+				return token;
+			}
+			if (Date.now() >= deadline) {
+				throw new ContractStoreBusyError(
+					`contract store is held by ${readLockOwner() ?? "another process"} (${lockPath}) — nothing was written, retry the write`,
+				);
+			}
+			sleepSync(LOCK_RETRY_MS);
+		}
+	};
+
+	/**
+	 * The version check, the update and the rename are one critical section
+	 * across processes, and the lock is released only while this writer still
+	 * owns it: a writer whose lock was taken over never deletes the new holder's.
+	 */
+	const withLock = <T>(action: () => T): T => {
+		const token = acquireLock();
+		try {
+			return action();
+		} finally {
+			if (readLockOwner() === token) {
+				rmSync(lockPath, { force: true });
+			}
+		}
+	};
 
 	const load = (): void => {
 		if (!existsSync(filePath)) {
@@ -133,8 +229,9 @@ export function openContractStore(filePath: string): ContractStore {
 		if (typeof raw.version !== "number" || !Number.isInteger(raw.version) || raw.version < 0) {
 			throw new ContractValidationError(["version: required non-negative integer"]);
 		}
-		// A corrupt envelope never loads: the changelog is validated entry by entry
-		// and must agree with the persisted version.
+		// A corrupt envelope never loads: the changelog is validated entry by
+		// entry and must agree with the persisted version, or an amendment would
+		// write malformed audit history forward.
 		const changelog = parseChangelog(raw.changelog, raw.version);
 		// Fail closed: migration and validation errors propagate to the caller.
 		const contract = migrateProjectContract(raw.contract);
@@ -168,41 +265,45 @@ export function openContractStore(filePath: string): ContractStore {
 			load();
 		},
 		draft(contract, summary) {
-			load();
-			if (file !== undefined) {
-				throw new ContractValidationError([
-					`a contract already exists at ${filePath} (version ${file.version}) — use amend`,
-				]);
-			}
-			const next: ContractFile = {
-				storeSchema: `${CONTRACT_STORE_SCHEMA}/v${CONTRACT_STORE_VERSION}`,
-				version: 1,
-				changelog: [{ version: 1, at: new Date().toISOString(), summary }],
-				// A copy: a caller mutating its own object can never edit what is cached here.
-				contract: structuredClone(validateProjectContract(contract)),
-			};
-			write(next);
-			return structuredClone(next);
+			return withLock(() => {
+				load();
+				if (file !== undefined) {
+					throw new ContractValidationError([
+						`a contract already exists at ${filePath} (version ${file.version}) — use amend`,
+					]);
+				}
+				const next: ContractFile = {
+					storeSchema: `${CONTRACT_STORE_SCHEMA}/v${CONTRACT_STORE_VERSION}`,
+					version: 1,
+					changelog: [{ version: 1, at: new Date().toISOString(), summary }],
+					// A copy: a caller mutating its own object can never edit what is cached here.
+					contract: structuredClone(validateProjectContract(contract)),
+				};
+				write(next);
+				return structuredClone(next);
+			});
 		},
 		amend(summary, update, expectedVersion) {
-			load();
-			if (file === undefined) {
-				throw new ContractValidationError(["no contract drafted yet — use draft first"]);
-			}
-			if (expectedVersion !== undefined && file.version !== expectedVersion) {
-				throw new ContractVersionConflict(
-					`expected version ${expectedVersion} but the file holds ${file.version}`,
-				);
-			}
-			const updated = validateProjectContract(update(structuredClone(file.contract)));
-			const next: ContractFile = {
-				...file,
-				version: file.version + 1,
-				changelog: [...file.changelog, { version: file.version + 1, at: new Date().toISOString(), summary }],
-				contract: structuredClone(updated),
-			};
-			write(next);
-			return structuredClone(next);
+			return withLock(() => {
+				load();
+				if (file === undefined) {
+					throw new ContractValidationError(["no contract drafted yet — use draft first"]);
+				}
+				if (expectedVersion !== undefined && file.version !== expectedVersion) {
+					throw new ContractVersionConflict(
+						`expected version ${expectedVersion} but the file holds ${file.version}`,
+					);
+				}
+				const updated = validateProjectContract(update(structuredClone(file.contract)));
+				const next: ContractFile = {
+					...file,
+					version: file.version + 1,
+					changelog: [...file.changelog, { version: file.version + 1, at: new Date().toISOString(), summary }],
+					contract: structuredClone(updated),
+				};
+				write(next);
+				return structuredClone(next);
+			});
 		},
 	};
 }

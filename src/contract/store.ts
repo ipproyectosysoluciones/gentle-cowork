@@ -80,6 +80,11 @@ export interface ContractStoreOptions {
 	 * a check-then-delete would destroy the other writer's fresh lock (#65).
 	 */
 	beforeStaleLockSteal?: () => void;
+	/**
+	 * @internal Test seam: runs immediately before a displaced lock is put back, so a
+	 * test can prove what happens when the path was taken again in the window.
+	 */
+	beforeStaleLockRestore?: () => void;
 }
 
 export interface ContractStore {
@@ -243,6 +248,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 	 * stays on disk under its steal name rather than being silently destroyed.
 	 */
 	const restoreStolenLock = (stolenPath: string): void => {
+		options.beforeStaleLockRestore?.();
 		try {
 			linkSync(stolenPath, lockPath);
 		} catch {

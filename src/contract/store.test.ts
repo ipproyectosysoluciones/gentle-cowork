@@ -298,6 +298,35 @@ describe("contract store — cross-process write discipline", () => {
 		rmSync(`${path}.lock`, { force: true });
 	});
 
+	it("never destroys a displaced lock when the path is taken again", () => {
+		const path = freshPath();
+		const dead = spawnSync(process.execPath, ["-e", "0"]);
+		mkdirSync(dirname(`${path}.lock`), { recursive: true, mode: 0o700 });
+		writeFileSync(`${path}.lock`, `${dead.pid}:died\n`, { mode: 0o600 });
+
+		// A second reclaimer installs its lock, this process steals it by mistake,
+		// and a third writer takes the path before the restore can run. Neither the
+		// third writer's lock nor the displaced one may be destroyed.
+		const displaced = `${process.pid}:displaced\n`;
+		const third = `${process.pid}:third\n`;
+		const store = openContractStore(path, {
+			lockTimeoutMs: 60,
+			beforeStaleLockSteal: () => writeFileSync(`${path}.lock`, displaced, { mode: 0o600 }),
+			beforeStaleLockRestore: () => writeFileSync(`${path}.lock`, third, { mode: 0o600 }),
+		});
+
+		expect(() => store.draft(t8Contract, "draft")).toThrow(ContractStoreBusyError);
+		// The path belongs to the third writer and was never overwritten.
+		expect(readFileSync(`${path}.lock`, "utf8")).toBe(third);
+		// The displaced lock survives under its steal name instead of vanishing.
+		const dir = dirname(`${path}.lock`);
+		const leftovers = readdirSync(dir).filter((name) => name.includes(".steal-"));
+		expect(leftovers).toHaveLength(1);
+		expect(readFileSync(join(dir, leftovers[0] as string), "utf8")).toBe(displaced);
+		rmSync(`${path}.lock`, { force: true });
+		for (const name of leftovers) rmSync(join(dir, name), { force: true });
+	});
+
 	it("does not delete a lock another writer took over", () => {
 		const path = freshPath();
 		const writer = openContractStore(path);

@@ -465,3 +465,22 @@ describe("interpretContract — clock discipline (R4-006)", () => {
 		expect(result.gates.find((gate) => gate.id === "deadline:hard")?.state).toBe("open");
 	});
 });
+
+describe("interpretContract — clock hardening (R3-005/R3-006)", () => {
+	const contract = { ...t8Contract, deadlines: { ...t8Contract.deadlines, soft: null, hard: "2026-12-31T23:59:59Z" } };
+
+	// Untyped callers can hand over anything: `getTime` on a string throws a
+	// TypeError before the finiteness check, which is the untyped crash the
+	// refusal exists to replace.
+	it("refuses a clock that is not a Date at all", () => {
+		const notADate = "2026-10-25T12:00:00Z" as unknown as Date;
+		expect(() => interpretContract(contract, { now: notADate })).toThrow(ContractInterpretationError);
+	});
+
+	// `??` treats undefined and null as absent, so the documented default clock
+	// still applies; only a present-but-invalid instant is refused.
+	it("defaults an explicitly undefined clock instead of refusing it", () => {
+		const result = interpretContract(contract, { now: undefined });
+		expect(typeof result.generatedAt).toBe("string");
+	});
+});

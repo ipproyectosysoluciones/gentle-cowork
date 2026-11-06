@@ -43,7 +43,10 @@ export class ContractInterpretationError extends Error {
  * would also escape as an untyped crash; the caller gets a typed refusal instead.
  */
 function anchorInstant(now: Date): string {
-	if (!Number.isFinite(now.getTime())) {
+	// A non-Date value reaches this function from untyped callers: `getTime` on it
+	// would throw a TypeError before any check ran, which is the same untyped crash
+	// this refusal exists to replace.
+	if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
 		throw new ContractInterpretationError(
 			`contract interpretation requires a valid clock: received ${String(now)} — every derived deadline gate would read "open"`,
 		);

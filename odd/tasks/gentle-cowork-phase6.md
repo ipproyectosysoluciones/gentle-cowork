@@ -360,3 +360,30 @@ revisión** (lección del beta) · Runner: Vitest.
   con `active: nan-full-power` y las seis claves `review-*` en
   `nan/deepseek-v4-flash`. La corrección del relay va **allí** (models.json +
   perfil activo), no en el agent home, y exige reiniciar el proceso.
+- **L19 (2026-11-06, landing of the lock stack and the 6.2 slice — rebase merges, admin
+  bypass, superseded SHAs):** the four candidates landed on `dev` in one sequence: #62 →
+  `45b6eb8`, #63 → `1b23a54`, #64 → `516e09b`, #61 → `de34465`. All four were rebase merges,
+  so the SHAs quoted by earlier entries are superseded: `51e0623` → `45b6eb8`, `5511d29` →
+  `1b23a54`, `23440ae` → `516e09b`, and the whole 6.2 branch (`fbd95d4` … `c9adb2a`) was
+  replayed on top of the lock chain as `d1eb4df … 47f2f62`. Immediately after #64, `dev`'s
+  tree was `db6de025…`, byte-identical to the tree the independent verifier measured
+  (239 passed | 3 todo, typecheck exit 0) — the reviewed bytes are the landed bytes. Final
+  `dev` with 6.2: **265 passed | 3 todo (268)**, 21 test files, `pnpm run typecheck` exit 0,
+  tree `ed29cb03…`.
+  **Bypass, by explicit owner decision:** `dev` requires one approving review
+  (`required_approving_review_count: 1`) and all four PRs were authored by the same account
+  that is the only CODEOWNER, so self-approval was impossible. The ruleset declares the
+  Admin role as a bypass actor; every merge used `--admin`. Recorded here because it is a
+  policy bypass, not a formality.
+  **Mechanics that blocked the landing, for next time:** the harness safety layer refuses
+  `git push --force*` even when the owner authorizes it in conversation, so the owner ran the
+  two force-with-lease pushes himself. Merging `dev` into a PR branch is **not** a workaround:
+  the sync merge reintroduced test blocks that the top slice had de-duplicated, and GitHub
+  then refuses to rebase a branch carrying a merge commit ("This branch can't be rebased").
+  The workable path is rebase locally onto `dev`, ask the owner to push, then rebase-merge.
+  The 6.2 doc conflict was resolved by verbatim union (`L8-a`, `L9`…`L16`, `L16-a/b/c`,
+  `L17`, `L18`, nothing reworded, nothing renumbered) plus one commit that moved the chain
+  slice records after `L16`.
+  **Follow-up:** #65 records the residual race in the stale-lock reclaim
+  (`removeLockIfUnchanged` is compare-then-delete, `store.ts:197-205`), which the verifier
+  rated important but not a blocker.

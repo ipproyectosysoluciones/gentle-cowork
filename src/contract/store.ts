@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import {
 	closeSync,
 	existsSync,
+	linkSync,
 	mkdirSync,
 	openSync,
 	readFileSync,
@@ -73,6 +74,12 @@ export class ContractStoreBusyError extends Error {
 export interface ContractStoreOptions {
 	/** How long a write waits for the store lock before failing. Default 5000ms. */
 	lockTimeoutMs?: number;
+	/**
+	 * @internal Test seam: runs immediately before the store displaces a lock it judged
+	 * dead, so a test can interleave a concurrent reclaimer at exactly the window where
+	 * a check-then-delete would destroy the other writer's fresh lock (#65).
+	 */
+	beforeStaleLockSteal?: () => void;
 }
 
 export interface ContractStore {
@@ -174,36 +181,74 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 	const readLockOwner = (): string | undefined => readLockText()?.split("\n")[0]?.trim() || undefined;
 
 	/** The lock file's owner and mtime, or that there is nothing on disk. */
-	const readLockSnapshot = (): LockSnapshot => {
-		const text = readLockText();
-		if (text === undefined) {
+	const readSnapshotOf = (target: string): LockSnapshot => {
+		let text: string;
+		try {
+			text = readFileSync(target, "utf8");
+		} catch {
 			return { present: false };
 		}
 		const owner = text.split("\n")[0]?.trim() || undefined;
 		try {
-			return { present: true, owner, mtimeMs: statSync(lockPath).mtimeMs };
+			return { present: true, owner, mtimeMs: statSync(target).mtimeMs };
 		} catch {
 			return { present: false }; // gone between the read and the stat
 		}
 	};
 
+	const readLockSnapshot = (): LockSnapshot => readSnapshotOf(lockPath);
+
 	/**
-	 * Removes the lock only while it is still exactly the snapshot just inspected.
-	 * Between a read and a delete another waiter may reclaim the old lock and
-	 * create its own: deleting that fresh lock by path alone would put two writers
-	 * inside one critical section. A changed (or already absent) lock is left
-	 * untouched and the caller's loop simply retries.
+	 * Steals the lock only while it is still exactly the snapshot judged dead.
+	 *
+	 * The comparison alone cannot carry this: between the read and the removal
+	 * another waiter may reclaim the same dead lock and create a fresh one of its
+	 * own, and removing that fresh lock by path would put two writers inside one
+	 * critical section (#65). `rename(2)` is atomic, so exactly one reclaimer moves
+	 * whatever is on the path to a name nobody else knows; the moved inode is then
+	 * verified against the snapshot meant to be stolen and only that inode is
+	 * removed. A lock that changed hands in the window is put back — never
+	 * overwritten, never left in limbo — and this caller simply retries.
 	 */
-	const removeLockIfUnchanged = (snapshot: LockSnapshot): boolean => {
+	const stealStaleLock = (snapshot: LockSnapshot): boolean => {
 		if (!snapshot.present) {
-			return false; // nothing on disk to remove
+			return false; // nothing on disk to steal
 		}
 		const current = readLockSnapshot();
 		if (!current.present || current.owner !== snapshot.owner || current.mtimeMs !== snapshot.mtimeMs) {
-			return false; // taken over in the meantime: delete nothing
+			return false; // taken over in the meantime: steal nothing
 		}
-		rmSync(lockPath, { force: true });
-		return true;
+		options.beforeStaleLockSteal?.();
+		const stolenPath = `${lockPath}.steal-${process.pid}-${randomUUID()}`;
+		try {
+			renameSync(lockPath, stolenPath);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+				return false; // another reclaimer moved it first
+			}
+			throw error;
+		}
+		const moved = readSnapshotOf(stolenPath);
+		if (moved.owner === snapshot.owner && moved.mtimeMs === snapshot.mtimeMs) {
+			rmSync(stolenPath, { force: true }); // only the name this caller stole
+			return true;
+		}
+		restoreStolenLock(stolenPath);
+		return false;
+	};
+
+	/**
+	 * Puts a displaced lock back. `link(2)` is atomic and create-only, so a path a
+	 * third writer has already taken is never overwritten; the displaced inode then
+	 * stays on disk under its steal name rather than being silently destroyed.
+	 */
+	const restoreStolenLock = (stolenPath: string): void => {
+		try {
+			linkSync(stolenPath, lockPath);
+		} catch {
+			return; // the path is taken again: never displace the new holder
+		}
+		rmSync(stolenPath, { force: true });
 	};
 
 	/**
@@ -230,7 +275,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			if (ageMs < LOCK_UNREADABLE_GRACE_MS) {
 				return; // young: possibly a writer that has not written its pid yet
 			}
-			removeLockIfUnchanged(snapshot);
+			stealStaleLock(snapshot);
 			return;
 		}
 		if (pid === process.pid) {
@@ -244,7 +289,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 				return; // EPERM means alive; anything else is not evidence of death
 			}
 		}
-		removeLockIfUnchanged(snapshot); // provably dead: reclaim it, unless it already moved on
+		stealStaleLock(snapshot); // provably dead: steal it, unless it already moved on
 	};
 
 	/** Takes the lock if it is free; never leaves an unowned lock behind. */
@@ -264,7 +309,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			closeSync(fd);
 			// Never a bare delete: another writer may have reclaimed this file and
 			// created its own, which must survive this cleanup.
-			removeLockIfUnchanged(readLockSnapshot());
+			stealStaleLock(readLockSnapshot());
 			throw error;
 		}
 		closeSync(fd);

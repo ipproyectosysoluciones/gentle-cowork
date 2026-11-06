@@ -2,7 +2,7 @@
 // project in the blackboard folder (.gentle-cowork/contract.json). Fail closed
 // on load — a corrupt or unknown-version contract never starts execution —
 // and optimistic version counting for amendments, with a changelog per version.
-import { mkdirSync, mkdtempSync, existsSync, statSync, readFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -272,6 +272,30 @@ describe("contract store — cross-process write discipline", () => {
 
 		expect(store.amend("after the crash", (draft) => draft, 1).version).toBe(2);
 		expect(existsSync(`${path}.lock`)).toBe(false);
+	});
+
+	it("never displaces the lock another writer created during the reclaim (#65)", () => {
+		const path = freshPath();
+		const dead = spawnSync(process.execPath, ["-e", "0"]);
+		mkdirSync(dirname(`${path}.lock`), { recursive: true, mode: 0o700 });
+		writeFileSync(`${path}.lock`, `${dead.pid}:died\n`, { mode: 0o600 });
+
+		// The reclaim decides the on-disk lock is dead, and only then does a second
+		// reclaimer win the race and install a fresh lock of its own. A
+		// check-then-delete sequence deletes that fresh lock by path alone, so two
+		// writers end up inside one critical section; an atomic steal moves exactly
+		// one inode and puts back whatever it did not mean to take.
+		const fresh = `${process.pid}:fresh-holder\n`;
+		const store = openContractStore(path, {
+			lockTimeoutMs: 60,
+			beforeStaleLockSteal: () => writeFileSync(`${path}.lock`, fresh, { mode: 0o600 }),
+		});
+
+		expect(() => store.draft(t8Contract, "draft")).toThrow(ContractStoreBusyError);
+		// The fresh holder's lock survives byte for byte, and no steal name is left behind.
+		expect(readFileSync(`${path}.lock`, "utf8")).toBe(fresh);
+		expect(readdirSync(dirname(`${path}.lock`)).filter((name) => name.includes(".steal-"))).toEqual([]);
+		rmSync(`${path}.lock`, { force: true });
 	});
 
 	it("does not delete a lock another writer took over", () => {

@@ -20,15 +20,16 @@
  */
 import { randomUUID } from "node:crypto";
 import {
-	closeSync,
 	existsSync,
 	linkSync,
 	mkdirSync,
-	openSync,
 	readFileSync,
+	readdirSync,
 	renameSync,
 	rmSync,
+	rmdirSync,
 	statSync,
+	type Stats,
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -81,8 +82,8 @@ export interface ContractStoreOptions {
 	 */
 	beforeStaleLockSteal?: () => void;
 	/**
-	 * @internal Test seam: runs immediately before a displaced lock is put back, so a
-	 * test can prove what happens when the path was taken again in the window.
+	 * @internal Test seam: runs immediately before a parked owner goes back, so a test
+	 * can probe the window where a displaced lock is off its canonical name (#69).
 	 */
 	beforeStaleLockRestore?: () => void;
 }
@@ -121,12 +122,27 @@ const LOCK_RETRY_MS = 10;
  */
 const LOCK_UNREADABLE_GRACE_MS = 30_000;
 
-/** The lock file as observed at one instant: absent, or present with owner and mtime. */
-interface LockSnapshot {
-	present: boolean;
-	owner?: string;
-	mtimeMs?: number;
+/** The owner file inside the lock container. */
+const LOCK_OWNER_NAME = "owner";
+/** Names a displaced owner is parked under, inside the same container. */
+const LOCK_TAKEN_PREFIX = "taken-";
+
+/** The published owner, or a dispute file a reclaimer left behind while displacing one. */
+interface LockEntry {
+	name: string;
+	token?: string;
+	mtimeMs: number;
 }
+
+/**
+ * The lock as observed at one instant. A directory is the protocol; a regular
+ * file is a pre-directory artifact from a mixed-version rollout.
+ */
+type LockView =
+	| { kind: "absent" }
+	| { kind: "unreadable" }
+	| { kind: "legacy"; token?: string; mtimeMs: number }
+	| { kind: "directory"; owner?: LockEntry; taken: LockEntry[]; mtimeMs: number };
 
 const sleepSync = (ms: number): void => {
 	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -171,138 +187,106 @@ const parseChangelog = (raw: unknown, version: number): ChangelogEntry[] => {
 export function openContractStore(filePath: string, options: ContractStoreOptions = {}): ContractStore {
 	const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
 	const lockPath = `${filePath}.lock`;
+	const ownerPath = join(lockPath, LOCK_OWNER_NAME);
 	let file: ContractFile | undefined;
 
-	/** The raw lock file text, or undefined when it cannot be read. */
-	const readLockText = (): string | undefined => {
+	/** One entry of the container, by name; undefined when it vanished mid-read. */
+	const readLockEntry = (target: string, name: string): LockEntry | undefined => {
 		try {
-			return readFileSync(lockPath, "utf8");
+			const token = readFileSync(target, "utf8").split("\n")[0]?.trim() || undefined;
+			return { name, token, mtimeMs: statSync(target).mtimeMs };
 		} catch {
 			return undefined;
 		}
 	};
 
-	/** The lock owner as written in the lock file (`pid:token`), or undefined. */
-	const readLockOwner = (): string | undefined => readLockText()?.split("\n")[0]?.trim() || undefined;
-
-	/** The lock file's owner and mtime, or that there is nothing on disk. */
-	const readSnapshotOf = (target: string): LockSnapshot => {
-		let text: string;
-		try {
-			text = readFileSync(target, "utf8");
-		} catch {
-			return { present: false };
-		}
-		const owner = text.split("\n")[0]?.trim() || undefined;
-		try {
-			return { present: true, owner, mtimeMs: statSync(target).mtimeMs };
-		} catch {
-			return { present: false }; // gone between the read and the stat
-		}
-	};
-
-	const readLockSnapshot = (): LockSnapshot => readSnapshotOf(lockPath);
-
 	/**
-	 * Steals the lock only while it is still exactly the snapshot judged dead.
+	 * The lock as it is on disk right now.
 	 *
-	 * The comparison alone cannot carry this: between the read and the removal
-	 * another waiter may reclaim the same dead lock and create a fresh one of its
-	 * own, and removing that fresh lock by path would put two writers inside one
-	 * critical section (#65). `rename(2)` is atomic, so exactly one reclaimer moves
-	 * whatever is on the path to a name nobody else knows; the moved inode is then
-	 * verified against the snapshot meant to be stolen and only that inode is
-	 * removed. A lock that changed hands in the window is put back — never
-	 * overwritten, never left in limbo — and this caller simply retries.
+	 * The lock is a directory. Acquiring it is `mkdir(2)` — atomic and create-only —
+	 * and its existence alone blocks every other writer, so ownership inside it can
+	 * be displaced and put back without ever exposing a path that looks free. That
+	 * is the property the file-based protocol could not give: it had to delete a
+	 * name to reclaim, and the deletion window is where two writers could enter one
+	 * critical section (#65) and where a third could enter while a displaced lock was
+	 * off the path (#69).
 	 */
-	const stealStaleLock = (snapshot: LockSnapshot): boolean => {
-		if (!snapshot.present) {
-			return false; // nothing on disk to steal
-		}
-		const current = readLockSnapshot();
-		if (!current.present || current.owner !== snapshot.owner || current.mtimeMs !== snapshot.mtimeMs) {
-			return false; // taken over in the meantime: steal nothing
-		}
-		options.beforeStaleLockSteal?.();
-		const stolenPath = `${lockPath}.steal-${process.pid}-${randomUUID()}`;
+	const viewLock = (): LockView => {
+		let stats: Stats;
 		try {
-			renameSync(lockPath, stolenPath);
+			stats = statSync(lockPath);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-				return false; // another reclaimer moved it first
+				return { kind: "absent" };
 			}
-			throw error;
+			return { kind: "unreadable" }; // a lock we cannot stat is not evidence of freedom
 		}
-		const moved = readSnapshotOf(stolenPath);
-		if (moved.owner === snapshot.owner && moved.mtimeMs === snapshot.mtimeMs) {
-			rmSync(stolenPath, { force: true }); // only the name this caller stole
-			return true;
+		if (!stats.isDirectory()) {
+			// A regular file here predates the container protocol (mixed-version rollout).
+			const legacy = readLockEntry(lockPath, "lock");
+			return { kind: "legacy", token: legacy?.token, mtimeMs: legacy?.mtimeMs ?? stats.mtimeMs };
 		}
-		restoreStolenLock(stolenPath);
-		return false;
-	};
-
-	/**
-	 * Puts a displaced lock back. `link(2)` is atomic and create-only, so a path a
-	 * third writer has already taken is never overwritten; the displaced inode then
-	 * stays on disk under its steal name rather than being silently destroyed.
-	 */
-	const restoreStolenLock = (stolenPath: string): void => {
-		options.beforeStaleLockRestore?.();
+		const owner = readLockEntry(ownerPath, LOCK_OWNER_NAME);
+		let names: string[] = [];
 		try {
-			linkSync(stolenPath, lockPath);
+			names = readdirSync(lockPath);
 		} catch {
-			return; // the path is taken again: never displace the new holder
+			names = []; // the container vanished between the stat and the listing
 		}
-		rmSync(stolenPath, { force: true });
+		const taken = names
+			.filter((name) => name.startsWith(LOCK_TAKEN_PREFIX))
+			.sort()
+			.flatMap((name) => {
+				const entry = readLockEntry(join(lockPath, name), name);
+				return entry === undefined ? [] : [entry];
+			});
+		return { kind: "directory", owner, taken, mtimeMs: stats.mtimeMs };
 	};
 
-	/**
-	 * A readable owner is never displaced by age: a live holder is never stolen,
-	 * however slow it is. Elapsed time alone is not evidence of death, and
-	 * treating it as such produced two writers inside one critical section, each
-	 * reporting success.
-	 *
-	 * An unreadable owner — absent, empty, or without a positive pid — cannot be
-	 * liveness-checked at all; a writer killed between `openSync("wx")` and its
-	 * owner write leaves exactly that shape. There, and only there, age is the
-	 * evidence: after LOCK_UNREADABLE_GRACE_MS no write can still be holding it,
-	 * and never reclaiming it would fail every later writer forever.
-	 */
-	const reclaimAbandonedLock = (): void => {
-		const snapshot = readLockSnapshot();
-		if (!snapshot.present) {
-			return; // nothing to reclaim
-		}
-		const pid = Number.parseInt(snapshot.owner?.split(":")[0] ?? "", 10);
-		const readable = snapshot.owner !== undefined && Number.isInteger(pid) && pid > 0;
-		if (!readable) {
-			const ageMs = Date.now() - (snapshot.mtimeMs ?? Date.now());
-			if (ageMs < LOCK_UNREADABLE_GRACE_MS) {
-				return; // young: possibly a writer that has not written its pid yet
-			}
-			stealStaleLock(snapshot);
-			return;
-		}
-		if (pid === process.pid) {
-			return; // ours: hold it
-		}
+	/** The token currently published as the owner, or undefined. */
+	const readLockOwner = (): string | undefined => {
+		const view = viewLock();
+		if (view.kind === "directory") return view.owner?.token;
+		if (view.kind === "legacy") return view.token;
+		return undefined;
+	};
+
+	const ownerPid = (token: string | undefined): number | undefined => {
+		const pid = Number.parseInt(token?.split(":")[0] ?? "", 10);
+		return token !== undefined && Number.isInteger(pid) && pid > 0 ? pid : undefined;
+	};
+
+	/** Only `ESRCH` proves death: `EPERM` means alive, anything else is no evidence. */
+	const provablyDead = (pid: number): boolean => {
+		if (pid === process.pid) return false; // ours: wait for ourselves, never displace
 		try {
 			process.kill(pid, 0);
-			return; // alive (possibly under another user): hold it
+			return false;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
-				return; // EPERM means alive; anything else is not evidence of death
-			}
+			return (error as NodeJS.ErrnoException).code === "ESRCH";
 		}
-		stealStaleLock(snapshot); // provably dead: steal it, unless it already moved on
 	};
 
-	/** Takes the lock if it is free; never leaves an unowned lock behind. */
-	const createLock = (token: string): boolean => {
-		let fd: number;
+	/** Frees the container this process owns: its own owner file, then the directory. */
+	const releaseLockContainer = (): void => {
+		rmSync(ownerPath, { force: true });
 		try {
-			fd = openSync(lockPath, "wx", 0o600);
+			rmdirSync(lockPath); // a leftover dispute file keeps it: the next acquirer settles it
+		} catch {
+			/* not empty, or already gone */
+		}
+	};
+
+	/**
+	 * Takes the lock if the container is free. Ownership is established by the
+	 * `mkdir`: no other writer can create this name while it exists, so publishing
+	 * the owner inside it cannot race with anyone. A failure here frees only the
+	 * container this process created — never a snapshot compared after the fact,
+	 * which was vacuous because it was taken after the failure (#69).
+	 */
+	const createLock = (token: string): boolean => {
+		try {
+			mkdirSync(lockPath, { mode: 0o700 });
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
 				throw error;
@@ -310,16 +294,147 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			return false;
 		}
 		try {
-			writeFileSync(fd, `${token}\n`);
+			writeFileSync(ownerPath, `${token}\n`, { mode: 0o600, flag: "wx" });
 		} catch (error) {
-			closeSync(fd);
-			// Never a bare delete: another writer may have reclaimed this file and
-			// created its own, which must survive this cleanup.
-			stealStaleLock(readLockSnapshot());
+			releaseLockContainer();
 			throw error;
 		}
-		closeSync(fd);
-		return true;
+		return readLockEntry(ownerPath, LOCK_OWNER_NAME)?.token === token;
+	};
+
+	/**
+	 * Puts a displaced owner back. `link(2)` is atomic and create-only, so an owner
+	 * already republished is never overwritten; and because the container still
+	 * exists, no third writer can have acquired the store in the meantime — that is
+	 * exactly the window #69 closed.
+	 */
+	const restoreDisputedOwner = (entry: LockEntry): void => {
+		options.beforeStaleLockRestore?.();
+		const source = join(lockPath, entry.name);
+		try {
+			linkSync(source, ownerPath);
+		} catch {
+			// Someone republished an owner first: ours is a duplicate. Keep the dispute
+			// file while its holder may still be alive, drop it once it is provably dead.
+			const published = readLockEntry(ownerPath, LOCK_OWNER_NAME);
+			const pid = ownerPid(entry.token);
+			if (published !== undefined && (pid === undefined || provablyDead(pid))) {
+				rmSync(source, { force: true });
+			}
+			return;
+		}
+		rmSync(source, { force: true });
+	};
+
+	/**
+	 * Finishes a dispute a crashed reclaimer left behind. The parked owner is the
+	 * evidence: a live holder is put back and keeps running untouched; a dead or
+	 * long-unreadable one is cleared so the container can be released (#69, S4/S6).
+	 */
+	const settleDispute = (entry: LockEntry): void => {
+		const pid = ownerPid(entry.token);
+		if (pid !== undefined) {
+			if (!provablyDead(pid)) {
+				restoreDisputedOwner(entry);
+				return;
+			}
+		} else if (Date.now() - entry.mtimeMs < LOCK_UNREADABLE_GRACE_MS) {
+			return; // young and unreadable: the reclaimer that parked it may still be working
+		}
+		rmSync(join(lockPath, entry.name), { force: true });
+	};
+
+	/**
+	 * Takes over a lock whose owner is proven dead. The owner file is moved aside
+	 * *inside* the container and compared with the token judged dead: a mismatch
+	 * means the lock changed hands, so it goes back and the caller retries. Nothing
+	 * is deleted by path, which is what #65 fixed half-way and #69 finished.
+	 *
+	 * `expected` undefined means the parked owner was unreadable, so whatever the
+	 * rename moved is the artifact that was judged — it cannot have changed hands.
+	 */
+	const displaceOwner = (expected: string | undefined): void => {
+		options.beforeStaleLockSteal?.();
+		const name = `${LOCK_TAKEN_PREFIX}${process.pid}-${randomUUID()}`;
+		const target = join(lockPath, name);
+		try {
+			renameSync(ownerPath, target);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+				return; // another reclaimer moved it first
+			}
+			throw error;
+		}
+		const moved = readLockEntry(target, name);
+		if (moved === undefined) {
+			return;
+		}
+		if (expected !== undefined && moved.token !== expected) {
+			restoreDisputedOwner(moved);
+			return;
+		}
+		rmSync(target, { force: true }); // exactly the owner judged dead
+		releaseLockContainer();
+	};
+
+	/** A regular file at the lock path predates the container protocol. */
+	const settleLegacyLock = (view: { token?: string; mtimeMs: number }): void => {
+		const pid = ownerPid(view.token);
+		if (pid !== undefined) {
+			if (!provablyDead(pid)) {
+				return;
+			}
+		} else if (Date.now() - view.mtimeMs < LOCK_UNREADABLE_GRACE_MS) {
+			return;
+		}
+		// Nothing protects a plain file, so unlinking it by path is the only way to
+		// free it. Mixed-version rollouts upgrade every writer together (S5 in
+		// odd/tasks/contract-lock-protocol.md).
+		rmSync(lockPath, { force: true });
+	};
+
+	/**
+	 * Makes progress on a lock this process does not own: finishes a crashed
+	 * reclaimer's dispute, and takes over an owner that is provably dead. A live
+	 * holder is never displaced by age — elapsed time is not evidence of death, and
+	 * treating it as such produced two writers inside one critical section.
+	 */
+	const settleLock = (): void => {
+		const view = viewLock();
+		if (view.kind === "absent" || view.kind === "unreadable") {
+			return;
+		}
+		if (view.kind === "legacy") {
+			settleLegacyLock(view);
+			return;
+		}
+		for (const entry of view.taken) {
+			settleDispute(entry);
+		}
+		const after = viewLock();
+		if (after.kind !== "directory") {
+			return; // the dispute work above released it or it went away
+		}
+		const owner = after.owner;
+		if (owner === undefined) {
+			// A writer that died between `mkdir` and its owner write, or one still inside
+			// that window: age is the only evidence, and a young one is never touched.
+			if (Date.now() - after.mtimeMs >= LOCK_UNREADABLE_GRACE_MS) {
+				releaseLockContainer();
+			}
+			return;
+		}
+		const pid = ownerPid(owner.token);
+		if (pid === undefined) {
+			if (Date.now() - owner.mtimeMs >= LOCK_UNREADABLE_GRACE_MS) {
+				displaceOwner(undefined);
+			}
+			return;
+		}
+		if (!provablyDead(pid)) {
+			return; // alive (possibly under another user): hold it
+		}
+		displaceOwner(owner.token ?? undefined);
 	};
 
 	const acquireLock = (): string => {
@@ -327,12 +442,10 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 		const token = `${process.pid}:${randomUUID()}`;
 		const deadline = Date.now() + lockTimeoutMs;
 		for (;;) {
-			// The ownership read after creation closes the reclaim race between two
-			// waiters: a writer that finds someone else's token does not proceed.
-			if (createLock(token) && readLockOwner() === token) {
+			if (createLock(token)) {
 				return token;
 			}
-			reclaimAbandonedLock();
+			settleLock();
 			if (Date.now() >= deadline) {
 				throw new ContractStoreBusyError(
 					`contract store is held by ${readLockOwner() ?? "another process"} (${lockPath}) — nothing was written, retry the write`,
@@ -343,9 +456,9 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 	};
 
 	/**
-	 * The version check, the update and the rename are one critical section
-	 * across processes, and the lock is released only while this writer still
-	 * owns it: a writer whose lock was taken over never deletes the new holder's.
+	 * The version check, the update and the rename are one critical section across
+	 * processes, and the lock is released only while this writer still owns it: a
+	 * writer whose lock was taken over never releases the new holder's.
 	 */
 	const withLock = <T>(action: () => T): T => {
 		const token = acquireLock();
@@ -353,7 +466,7 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			return action();
 		} finally {
 			if (readLockOwner() === token) {
-				rmSync(lockPath, { force: true });
+				releaseLockContainer();
 			}
 		}
 	};

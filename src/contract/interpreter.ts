@@ -26,6 +26,31 @@ export interface InterpretationResult {
 	generatedAt: string;
 }
 
+/** The interpreter was handed a clock that is not a real instant. */
+export class ContractInterpretationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ContractInterpretationError";
+	}
+}
+
+/**
+ * The instant an interpretation is anchored to, or a typed failure.
+ *
+ * An invalid clock cannot be interpreted around: `now > deadline` is false for
+ * every deadline, so the derived gates would all read `open` — fail-open, the
+ * opposite of this module's contract. A raw `RangeError` from `toISOString()`
+ * would also escape as an untyped crash; the caller gets a typed refusal instead.
+ */
+function anchorInstant(now: Date): string {
+	if (!Number.isFinite(now.getTime())) {
+		throw new ContractInterpretationError(
+			`contract interpretation requires a valid clock: received ${String(now)} — every derived deadline gate would read "open"`,
+		);
+	}
+	return now.toISOString();
+}
+
 const GATE_STATE_DETAILS: Record<GateState, string> = {
 	passed: "gate passed",
 	open: "gate open — blocks progression",
@@ -99,7 +124,7 @@ function evaluateDeadlineGate(
  */
 export function interpretContract(contract: ProjectContract, options?: { now?: Date }): InterpretationResult {
 	const now = options?.now ?? new Date();
-	const generatedAt = now.toISOString();
+	const generatedAt = anchorInstant(now);
 
 	// 1. Build TaskContracts for PENDING deliverables; collect skipped for delivered/blocked
 	const contracts: TaskContract[] = [];

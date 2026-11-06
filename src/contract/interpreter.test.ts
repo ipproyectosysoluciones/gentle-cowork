@@ -3,7 +3,7 @@
 // The foundational fixture is the retrospective T8 contract with its real data.
 import { describe, expect, it } from "vitest";
 import { t8Contract } from "./fixtures.ts";
-import { interpretContract } from "./interpreter.ts";
+import { ContractInterpretationError, interpretContract } from "./interpreter.ts";
 
 describe("interpretContract — T8 fixture interpretation", () => {
 	it("maps pending deliverables to TaskContracts with correct id, objective, and acceptance criteria", () => {
@@ -445,5 +445,23 @@ describe("interpretContract — TaskContract structure", () => {
 		expect(tc.retryCount).toBe(0);
 		expect(tc.leaseFence).toBeUndefined();
 		expect(tc.workerNodeId).toBeUndefined();
+	});
+});
+describe("interpretContract — clock discipline (R4-006)", () => {
+	const contract = { ...t8Contract, deadlines: { ...t8Contract.deadlines, soft: null, hard: "2026-12-31T23:59:59Z" } };
+
+	// An invalid clock makes every `now > deadline` comparison false, so every
+	// derived deadline gate would read `open` — fail-open. A raw RangeError from
+	// toISOString() is not a fail-closed answer either: it is an untyped crash.
+	it("fails closed with a typed error when the injected clock is not an instant", () => {
+		const invalid = new Date(Number.NaN);
+		expect(() => interpretContract(contract, { now: invalid })).toThrow(ContractInterpretationError);
+		expect(() => interpretContract(contract, { now: invalid })).toThrow(/valid clock/);
+	});
+
+	it("keeps interpreting against a valid injected clock", () => {
+		const result = interpretContract(contract, { now: new Date("2026-10-25T12:00:00Z") });
+		expect(result.generatedAt).toBe("2026-10-25T12:00:00.000Z");
+		expect(result.gates.find((gate) => gate.id === "deadline:hard")?.state).toBe("open");
 	});
 });

@@ -97,13 +97,15 @@ revisión** (lección del beta) · Runner: Vitest.
 
 ### Deuda post-6.1 (abierta por la revisión nativa del 6.1, no bloqueante)
 
-- [ ] **T9** [S8] `removeLockIfUnchanged` reclama con check-then-delete; el robo
-  del lock debe ser atómico (rename a un nombre único + borrado sólo de ese
-  nombre), con un test que pruebe que dos reclaimers nunca se pisan. Item de
-  riesgo 4 (concurrencia) → verificador independiente antes de cerrar.
-- [ ] **T10** [S9] `interpretContract` debe fallar cerrado ante un reloj inyectado
-  inválido (error tipado, no `RangeError` crudo) y nunca dejar las puertas
-  derivadas en `open` por un `now` que no es una fecha.
+- [x] **T9** [S8] `removeLockIfUnchanged` reclamaba con check-then-delete; el robo
+  del lock es atómico ahora (rename a un nombre único + borrado sólo de ese
+  inodo, restore con `link` si el path cambió de manos), con un test de regresión
+  que falla contra la implementación anterior y una verificación independiente
+  PROVEN (item de riesgo 4). ✅ `69b102a` + `7cdc8d9`
+- [x] **T10** [S9] `interpretContract` falla cerrado ante un reloj inválido con
+  `ContractInterpretationError` (antes: `RangeError` crudo, y sin el crash todas
+  las puertas derivadas quedaban `open` — fail-open), y rechaza también un valor
+  que no es `Date`. ✅ `a0af5a0` + `7cdc8d9`
 
 ## Log
 
@@ -449,3 +451,53 @@ revisión** (lección del beta) · Runner: Vitest.
   target identity.
   **Follow-up:** `R4-006` is a new open item (interpreter `buildTaskContracts` 77-165) and
   joins #65 as advisory work, not as a re-review of this candidate.
+
+- **L21 (2026-11-06, T9/T10 — la deuda del 6.1 aterriza, y la revisión nativa del arreglo
+  escala por causalidad desconocida):** los dos hallazgos advisory que valían la pena se
+  cerraron y aterrizaron en `dev` por PR #68 (rebases: `6338b3c` doc, `69b102a` robo
+  atómico, `a0af5a0` reloj, `7cdc8d9` hardening).
+  **T9 (#65):** `removeLockIfUnchanged` comparaba y después borraba **por path**, así que un
+  segundo reclaimer que ganaba la misma carrera en esa ventana se quedaba sin su lock
+  fresco y los dos writers entraban en la sección crítica — la pérdida silenciosa que ya
+  describía `R4-CONCURRENT-WRITE`. Ahora: `rename(2)` a un nombre que nadie más conoce
+  (gana exactamente uno; el perdedor recibe `ENOENT` y reintenta), verificación del inodo
+  movido contra el snapshot que se juzgó muerto, borrado sólo de ese inodo, y
+  `link(2)`—atómico y create-only—para devolver un lock que cambió de manos. TDD: el test
+  de regresión interleavea un reclaimer concurrente por una costura interna
+  (`beforeStaleLockSteal`); contra la implementación anterior **`draft()` tenía éxito
+  después de borrar el lock fresco** (RED 1 failed | 25 passed → GREEN 26 passed).
+  **T10 (R4-006):** `interpretContract` hacía `now.toISOString()` sin validar el reloj
+  inyectado; un `Date` inválido escapaba como `RangeError`, y como `now > deadline` es
+  falso para ese reloj, sin el crash las puertas derivadas quedaban `open` — fail-open.
+  RED real (`got 'Invalid time value'`) → rechazo tipado `ContractInterpretationError`, más
+  `instanceof Date` para callers sin tipos.
+  **Verificación independiente (item de riesgo 4):** `gentle-ai-verify`, read-only, contra
+  los commits exactos. PROVEN en las dos unidades: reprodujo el defecto previo con la misma
+  costura, y los mutation checks (saltar la verificación del inodo / reemplazar el restore
+  por `rmSync`) hacen fallar el test nuevo — no es vacuo. El reloj: el digest diferencial
+  sobre cuatro relojes válidos es **byte-idéntico** entre `origin/dev` y la rama.
+  **La revisión nativa del arreglo cerró `escalated`**, no `approved`: la lente reliability
+  levantó seis hallazgos y el refuter no pudo probarlos (`probe unavailable on pi`), así que
+  la causalidad quedó desconocida. Cuatro **no sobreviven a la evidencia** — R3-001 decía
+  que `renameSync` no estaba importado (está, `store.ts:29`, y lo usan `:224` y `:391` con
+  la suite verde); R3-004 decía que el loop reusaba un snapshot viejo (`reclaimAbandonedLock`
+  lo relee en cada llamada); R3-006 decía que `{now: undefined}` saltea el reloj por defecto
+  (`??` trata `undefined` y `null` como ausentes); R3-002 describe un TOCTOU sobre el nombre
+  *robado*, cuyo inodo el rename ya fijó. Dos eran reales y se cerraron en `7cdc8d9`
+  (R3-005: un reloj que no es `Date` escapaba como `TypeError`; R3-003: la garantía del lock
+  desplazado pasó de comentario a costura + test con `beforeStaleLockRestore`).
+  **Residual aceptado y registrado en #69:** el verificador reprodujo una ventana de **tres**
+  procesos — A compara S, B lo remueve, C instala su lock y entra en la sección crítica, A
+  mueve el lock de C a un costado, D toma el path liberado → C y D concurrentes adentro. Es
+  la misma pérdida silenciosa de #65 en una ventana de instrucciones; el código nuevo no
+  destruye nada y el release de C ya no puede borrar el lock de D, pero la exclusión no es
+  total. Cerrarla de verdad exige tokens de generación en vez de liberar borrando — es un
+  rediseño del protocolo de reclamo, no un parche. #69 registra eso más dos items
+  preexistentes que el verificador encontró: el cleanup de `createLock` toma su snapshot
+  *después* del hecho (comparación vacua, idéntico en `dev`, inalcanzable sin error de I/O)
+  y los `*.steal-*` huérfanos no tienen GC.
+  **Decisión del dueño:** mergear con la escalación aceptada (la revisión nativa no autoriza
+  entrega, pero tampoco la prohíbe — la política del repo decide). Verificado: `git diff
+  dc19b48 7cdc8d9` sale vacío (los bytes verificados son los bytes aterrizados) y la suite
+  sobre `dev` da **271 passed | 3 todo (274)**, `pnpm run typecheck` exit 0. 239 líneas
+  autoradas en 4 commits, dentro de la norma ~400.

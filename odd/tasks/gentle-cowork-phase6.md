@@ -31,6 +31,24 @@ revisión** (lección del beta) · Runner: Vitest.
 - **S7 (ROADMAP, slice 6.2 — verbatim):** "**Motor de interpretación**: contrato →
   TaskContracts ejecutables + puertas evaluables en runtime (deadline vencido →
   gate; cláusula → restricción de scope; presupuesto → límites del oráculo)".
+- **S8 (#65 — verbatim, issue del dueño):** "`removeLockIfUnchanged` in
+  `src/contract/store.ts` reclaims a lock that looks dead with a
+  **check-then-delete** sequence: it stats and reads the lock to compare the owner
+  token (`store.ts:201-204`) and then deletes it in a separate call
+  (`store.ts:205`). That window is not atomic." … "Make the steal atomic by
+  renaming the stale lock to a unique name before deleting it, and deleting only
+  that name". Impacto declarado: "Narrow: it needs a pre-existing dead lock
+  **plus** two concurrent reclaimers inside a microsecond-scale window. It is not
+  a live-traffic blocker, but … A lost update here is silent."
+- **S9 (R4-006, revisión nativa del 6.1):** `src/contract/interpreter.ts:77-165`,
+  lente resilience, severidad WARNING, disposición *informational* (no bloqueante).
+  El texto original del hallazgo no quedó en ningún artefacto alcanzable del
+  repo, así que la especificación se fija sobre el defecto **demostrable** en ese
+  rango: `interpretContract` hace `now.toISOString()` sobre el reloj inyectado sin
+  validarlo, así que un `now` inválido revienta con `RangeError: Invalid time
+  value` en vez de fallar cerrado como promete el contrato del módulo. Con un
+  `now` inválido toda comparación `now > deadline` es falsa: sin el throw, las
+  puertas derivadas quedarían `open` — fail-**open**.
 
 ## Tasks
 
@@ -76,6 +94,16 @@ revisión** (lección del beta) · Runner: Vitest.
   26 tests RED→GREEN, suite 248. ✅ `fbd95d4` (+624 líneas: interpreter 175 +
   interpreter.test 449).
 - [x] **T8** [S7] boundary record del slice (L9 + L10). ✅ `4f5209b`
+
+### Deuda post-6.1 (abierta por la revisión nativa del 6.1, no bloqueante)
+
+- [ ] **T9** [S8] `removeLockIfUnchanged` reclama con check-then-delete; el robo
+  del lock debe ser atómico (rename a un nombre único + borrado sólo de ese
+  nombre), con un test que pruebe que dos reclaimers nunca se pisan. Item de
+  riesgo 4 (concurrencia) → verificador independiente antes de cerrar.
+- [ ] **T10** [S9] `interpretContract` debe fallar cerrado ante un reloj inyectado
+  inválido (error tipado, no `RangeError` crudo) y nunca dejar las puertas
+  derivadas en `open` por un `now` que no es una fecha.
 
 ## Log
 

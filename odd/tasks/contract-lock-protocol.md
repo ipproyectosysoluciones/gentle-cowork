@@ -160,3 +160,34 @@ la liberación deja de ser "borrar el path".
   vale dentro de un mismo PID namespace. El hazard de S5 quedó **peor de lo que escribí**:
   una versión previa no pierde datos contra el directorio, pero **no puede escribir** —
   el rollout conjunto no es recomendación, es requisito operativo.
+
+- **L5** Re-verificación independiente (item 4) tras las correcciones. **W1, W2 y W3:
+  PROVEN-CLOSED** con procesos reales, y con discriminación: revirtiendo cada arreglo en una
+  copia, las tres ventanas vuelven a REFUTED con la pérdida silenciosa exacta (M1 borra el
+  `owner` ajeno y el tercero **entra**; M2 deja entrar al settler con snapshot viejo; M3 deja
+  el contenedor trabado). Mutación de los tres tests nuevos: cada una los hace **fallar**
+  (M1/M2/M3), y M4 —reabrir #69 liberando el path en la rama de mismatch— hace fallar el test
+  de #69, así que tampoco es vacuo.
+  **Exclusión re-corrida con procesos reales:** 8 racers × 15 rondas, detector de solapamiento
+  adentro de la sección crítica → `totalEntered 120, totalOverlaps 0, lostUpdates 0,
+  changelogEntries 121, finalVersion 121`; con SIGKILL de un racer en el medio →
+  `survivors 7, totalEntered 105, totalOverlaps 0, lostUpdates 0`. Recuperación: holder vivo
+  estacionado se restaura sin interrumpirlo, muerto se limpia, owner fantasma sin pid se
+  libera tras el grace, `taken-*` de un pid vivo ajeno se respeta.
+  **Auditoría de call-sites:** el único borrado de `owner` por path que queda es el release
+  con verificación de token de `withLock` (único caller); `rmdir` no puede sacar un
+  contenedor repoblado; `link`/`write` son create-only; `rename` verifica el inodo movido.
+  Confirmado: **no queda ningún borrado por path fuera del release verificado**.
+  Suite: `store.test.ts` **33/33**, `pnpm test` **277 passed | 3 todo (280)**, `typecheck`
+  exit 0, repo limpio antes y después.
+  **Residuales que quedan (todos de disponibilidad o basura, ninguno de pérdida, salvo el
+  caveat declarado):** W5 owner fantasma restaurado para un pid vivo que ya salió de la
+  sección crítica (bloquea escrituras hasta que ese proceso muera), W4 `taken-*` de un pid
+  vivo no-holder (basura hasta lo mismo), el errno crudo (`ENOENT`/`EEXIST`) que puede ver un
+  writer que estuvo colgado más de 30 s en la ventana de creación —donde el contrato documenta
+  `ContractStoreBusyError` (desviación cosmética de S7)—, y el caveat heredado de que
+  `process.kill(pid, 0)` sólo es válido dentro de un mismo PID namespace: el único camino a
+  pérdida silenciosa es un despliegue multi-nodo sin namespace compartido. Los tres primeros
+  quedan como follow-up en #72; el último está declarado como límite de alcance (S5).
+  **Veredicto:** `Risk: item 4` con W1/W2/W3 cerradas y verificadas; los residuales no
+  bloquean la entrega.

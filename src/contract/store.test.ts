@@ -277,58 +277,97 @@ describe("contract store — cross-process write discipline", () => {
 	it("never displaces the lock another writer created during the reclaim (#65)", () => {
 		const path = freshPath();
 		const dead = spawnSync(process.execPath, ["-e", "0"]);
-		mkdirSync(dirname(`${path}.lock`), { recursive: true, mode: 0o700 });
-		writeFileSync(`${path}.lock`, `${dead.pid}:died\n`, { mode: 0o600 });
+		const dir = `${path}.lock`;
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		writeFileSync(join(dir, "owner"), `${dead.pid}:died\n`, { mode: 0o600 });
 
-		// The reclaim decides the on-disk lock is dead, and only then does a second
-		// reclaimer win the race and install a fresh lock of its own. A
-		// check-then-delete sequence deletes that fresh lock by path alone, so two
-		// writers end up inside one critical section; an atomic steal moves exactly
-		// one inode and puts back whatever it did not mean to take.
+		// The reclaim decides the owner is dead, and only then does a second reclaimer
+		// win the race and publish a fresh owner of its own.
 		const fresh = `${process.pid}:fresh-holder\n`;
 		const store = openContractStore(path, {
 			lockTimeoutMs: 60,
-			beforeStaleLockSteal: () => writeFileSync(`${path}.lock`, fresh, { mode: 0o600 }),
+			beforeStaleLockSteal: () => writeFileSync(join(dir, "owner"), fresh, { mode: 0o600 }),
 		});
 
 		expect(() => store.draft(t8Contract, "draft")).toThrow(ContractStoreBusyError);
-		// The fresh holder's lock survives byte for byte, and no steal name is left behind.
-		expect(readFileSync(`${path}.lock`, "utf8")).toBe(fresh);
-		expect(readdirSync(dirname(`${path}.lock`)).filter((name) => name.includes(".steal-"))).toEqual([]);
-		rmSync(`${path}.lock`, { force: true });
+		// The fresh holder's lock is back byte for byte, and no dispute file is left.
+		expect(readFileSync(join(dir, "owner"), "utf8")).toBe(fresh);
+		expect(readdirSync(dir).filter((name) => name.startsWith("taken-"))).toEqual([]);
+		rmSync(dir, { recursive: true, force: true });
 	});
 
-	it("never destroys a displaced lock when the path is taken again", () => {
+	// A reclaimer that died between parking an owner and putting it back leaves the
+	// evidence on disk; the next writer finishes the job instead of starting over.
+	it("puts a displaced live owner back after a reclaimer crashed", () => {
 		const path = freshPath();
 		const dead = spawnSync(process.execPath, ["-e", "0"]);
-		mkdirSync(dirname(`${path}.lock`), { recursive: true, mode: 0o700 });
-		writeFileSync(`${path}.lock`, `${dead.pid}:died\n`, { mode: 0o600 });
+		const dir = `${path}.lock`;
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		writeFileSync(join(dir, "taken-1"), `${process.pid}:live-holder\n`, { mode: 0o600 });
+		writeFileSync(join(dir, "owner"), `${dead.pid}:died\n`, { mode: 0o600 });
 
-		// A second reclaimer installs its lock, this process steals it by mistake,
-		// and a third writer takes the path before the restore can run. Neither the
-		// third writer's lock nor the displaced one may be destroyed.
-		const displaced = `${process.pid}:displaced\n`;
-		const third = `${process.pid}:third\n`;
-		const store = openContractStore(path, {
-			lockTimeoutMs: 60,
-			beforeStaleLockSteal: () => writeFileSync(`${path}.lock`, displaced, { mode: 0o600 }),
-			beforeStaleLockRestore: () => writeFileSync(`${path}.lock`, third, { mode: 0o600 }),
-		});
-
+		const store = openContractStore(path, { lockTimeoutMs: 60 });
 		expect(() => store.draft(t8Contract, "draft")).toThrow(ContractStoreBusyError);
-		// The path belongs to the third writer and was never overwritten.
-		expect(readFileSync(`${path}.lock`, "utf8")).toBe(third);
-		// The displaced lock survives under its steal name instead of vanishing.
-		const dir = dirname(`${path}.lock`);
-		const leftovers = readdirSync(dir).filter((name) => name.includes(".steal-"));
-		expect(leftovers).toHaveLength(1);
-		expect(readFileSync(join(dir, leftovers[0] as string), "utf8")).toBe(displaced);
-		rmSync(`${path}.lock`, { force: true });
-		for (const name of leftovers) rmSync(join(dir, name), { force: true });
+		// The live holder is back under the canonical name and nothing was left parked.
+		expect(readFileSync(join(dir, "owner"), "utf8")).toBe(`${process.pid}:live-holder\n`);
+		expect(readdirSync(dir).filter((name) => name.startsWith("taken-"))).toEqual([]);
+		rmSync(dir, { recursive: true, force: true });
 	});
 
-	it("does not delete a lock another writer took over", () => {
+	it("reclaims a container whose owner never got written, only after the grace", () => {
 		const path = freshPath();
+		const dir = `${path}.lock`;
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		const stale = new Date(Date.now() - 10 * 60_000);
+		utimesSync(dir, stale, stale);
+
+		// No owner, no dispute evidence, old enough that no writer can still be inside
+		// the window where it created the container and had not published itself.
+		const store = openContractStore(path, { lockTimeoutMs: 500 });
+		store.draft(t8Contract, "draft after an abandoned container");
+		expect(store.version()).toBe(1);
+		expect(existsSync(dir)).toBe(false); // released, not leaked
+	});
+
+	// The verifier's deterministic reproduction of the window that survived #65
+	// (issue #69): A compares S, B removes it, C installs its own lock and enters
+	// the critical section, A displaces C's lock, and D acquires what looks like a
+	// free path. If the reclaim ever leaves the path momentarily acquirable, C and
+	// D are both inside one critical section — the silent lost update #65 named.
+	it("never lets a third writer in while a reclaim is in flight (#69)", () => {
+		const path = freshPath();
+		const dead = spawnSync(process.execPath, ["-e", "0"]);
+		const dir = `${path}.lock`;
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		writeFileSync(join(dir, "owner"), `${dead.pid}:died\n`, { mode: 0o600 });
+
+		const liveHolder = `${process.pid}:live-holder\n`;
+		let third: unknown;
+		const store = openContractStore(path, {
+			lockTimeoutMs: 60,
+			// C publishes its lock after the reclaim judged the stale one dead.
+			beforeStaleLockSteal: () => writeFileSync(join(dir, "owner"), liveHolder, { mode: 0o600 }),
+			// D probes exactly while C's lock is off the canonical name.
+			beforeStaleLockRestore: () => {
+				const probe = openContractStore(path, { lockTimeoutMs: 60 });
+				try {
+					third = probe.draft(t8Contract, "third writer");
+				} catch (error) {
+					third = error;
+				}
+			},
+		});
+
+		expect(() => store.draft(t8Contract, "reclaimer")).toThrow(ContractStoreBusyError);
+		expect(third).toBeInstanceOf(ContractStoreBusyError);
+		// The third writer never entered: the store is still unwritten.
+		expect(openContractStore(path).version()).toBe(0);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("does not release a lock another writer took over", () => {
+		const path = freshPath();
+		const dir = `${path}.lock`;
 		const writer = openContractStore(path);
 		writer.draft(t8Contract, "draft");
 
@@ -336,16 +375,21 @@ describe("contract store — cross-process write discipline", () => {
 			"amendment that loses its lock",
 			(draft) => {
 				// A takeover while this writer is inside its critical section.
-				rmSync(`${path}.lock`, { force: true });
-				writeFileSync(`${path}.lock`, `${process.pid}:thief\n`, { mode: 0o600 });
+				writeFileSync(join(dir, "owner"), `${process.pid}:thief\n`, { mode: 0o600 });
 				return draft;
 			},
 			1,
 		);
 
-		// Releasing must be ownership-checked: the new holder's lock survives.
-		expect(readFileSync(`${path}.lock`, "utf8")).toBe(`${process.pid}:thief\n`);
-		rmSync(`${path}.lock`, { force: true });
+		// Releasing is ownership-checked: the new holder's owner survives untouched.
+		expect(readFileSync(join(dir, "owner"), "utf8")).toBe(`${process.pid}:thief\n`);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("frees its own container after a successful write", () => {
+		const path = freshPath();
+		openContractStore(path).draft(t8Contract, "draft");
+		expect(existsSync(`${path}.lock`)).toBe(false);
 	});
 
 	it("releases the lock when the update throws", () => {

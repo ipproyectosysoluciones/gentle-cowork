@@ -99,7 +99,7 @@ la liberación deja de ser "borrar el path".
   así que no hay datos que migrar. El sentido inverso sí se tolera: un `<file>.lock` de
   archivo regular (artefacto previo o crash) se reclama con las reglas viejas.
 
-  **Frontera del slice:** la unidad quedó en **600 líneas autoradas** en 3 commits (protocolo,
+  **Frontera del slice:** la unidad quedó en **732 líneas autoradas** en 5 commits (protocolo,
   tests, hardening R4-003), por encima de la norma ~400. Se entrega como **una** unidad y un
   solo PR (#71): partir el protocolo dejaría el árbol con la liberación vieja y el contenedor
   nuevo, un estado intermedio roto, y no hay un corte natural dentro de un cambio de

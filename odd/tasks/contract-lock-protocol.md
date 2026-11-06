@@ -102,3 +102,21 @@ la liberación deja de ser "borrar el path".
   diff contando reemplazos). Se entrega como **una** unidad: partir el protocolo dejaría el
   árbol con la liberación vieja y el contenedor nuevo, un estado intermedio roto. Decisión
   registrada acá, en el mismo commit (AGENTS.md, norma del slice).
+
+- **L3** Revisión nativa del rediseño (`review-bd4d13b3eb483bf5`, tres lentes, 3 corridas de
+  modelo): cerró **`escalated`** por causalidad desconocida, con dos CRITICAL y el resto
+  advisory. El admitidor mismo las marcó `unverified_location`. Contra evidencia:
+  **R4-001 es falsa** — dice que `sleepSync(LOCK_RETRY_MS)` está definido y nunca usado en
+  `acquireLock`, y el sleep está en `store.ts:454`, dentro del mismo loop que la finding
+  cita (443-458); además el loop previo tenía el mismo backoff, así que tampoco sería
+  introducido. **R4-002** describe que un error de I/O transitorio propaga en vez de
+  convertirse en `ContractStoreBusyError`: ese es exactamente el fail-closed que el módulo
+  declara (un `EIO` no es "el store está ocupado, nada se escribió" — es un fallo real y
+  debe verse), y el código previo ya propagaba cualquier error distinto de `EEXIST`.
+  **R4-003 sí era real y se corrigió**: `viewLock` trataba cualquier fallo de `readdirSync`
+  como contenedor vacío, así que un `EACCES` ocultaba los `taken-*` y podía dejar tomar un
+  contenedor cuya evidencia nombraba a un holder vivo; ahora sólo `ENOENT` es "ausente" y
+  cualquier otro fallo devuelve el contenedor como ilegible (se aparta, no se toca).
+  **R4-004** (rmdir que traga todos los errores) y **R4-005** (grace de 30s no
+  configurable, preexistente) quedan como follow-up: ninguno cambia el veredicto de
+  exclusión y el contenedor sin owner lo limpia el siguiente pasada tras el grace.

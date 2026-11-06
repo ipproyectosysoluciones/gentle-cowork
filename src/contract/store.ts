@@ -227,11 +227,18 @@ export function openContractStore(filePath: string, options: ContractStoreOption
 			return { kind: "legacy", token: legacy?.token, mtimeMs: legacy?.mtimeMs ?? stats.mtimeMs };
 		}
 		const owner = readLockEntry(ownerPath, LOCK_OWNER_NAME);
-		let names: string[] = [];
+		let names: string[];
 		try {
 			names = readdirSync(lockPath);
-		} catch {
-			names = []; // the container vanished between the stat and the listing
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+				return { kind: "absent" }; // the container vanished between the stat and the listing
+			}
+			// Any other failure (EACCES, EIO) hides the dispute evidence. Reporting an
+			// empty listing would let this writer settle a container whose taken-* still
+			// names a live holder, so a container we cannot list is not evidence of
+			// anything and is left alone (review R4-003).
+			return { kind: "unreadable" };
 		}
 		const taken = names
 			.filter((name) => name.startsWith(LOCK_TAKEN_PREFIX))

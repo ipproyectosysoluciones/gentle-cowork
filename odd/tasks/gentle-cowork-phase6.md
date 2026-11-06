@@ -177,6 +177,29 @@ revisión** (lección del beta) · Runner: Vitest.
   HEAD del linaje — con el relay inutilizable, la frescura del target no vale nada,
   mientras que el registro durable y el árbol limpio sí; cuando el acceso se restablezca,
   el START fresco sobre el HEAD final es barato y correcto. No se reintenta más.
+- **L15 (2026-10-26, diagnóstico del 401 del relay — cierre de la capa de modelos):** el
+  401 `"This API key does not have access to the requested model"` (≈1-2s, `stage: pi`)
+  NO era de red ni del repo. Causa: los seis perfiles de lentes apuntaban a
+  `z-ai/glm-5.3`, **retirado por NVIDIA el 2026-10-28T08:00Z** (410 Gone; verificado con
+  completion real contra `integrate.api.nvidia.com`). Además `moonshotai/kimi-k3` (el
+  `defaultModel` de Pi) está retirado desde el 2026-10-15, y media docena de perfiles
+  usaban prefijos de proveedor **inexistentes** (`nvidia-ultra/`, `nvidia-flash/`,
+  `nvidia-zai/` → `pi --model ...` = "Model not found"; los reales son `nvidia`,
+  `deepseek`, `openai`, `openrouter`, `anthropic`, `github-copilot`, `opencode`,
+  `opencode-go`, `openai-codex`). Repuntados a modelos **verificados con completion
+  real**: `nvidia/nvidia/nemotron-3-ultra-550b-a55b` (200 OK) y
+  `deepseek-ai/deepseek-v4.1-flash`. Superficies corregidas (backup en
+  `/tmp/pi-models-backup-1793934820/`): `profiles.json` (perfil activo + los otros dos),
+  `subagents.json` (model_profiles), `models.json` y `settings.json` de **ambos** homes
+  (`~/.gentle-shell/agent` y `~/.pi/agent`). El capture seguía fallando en esta sesión
+  porque **el proceso Pi resuelve el routing al arrancar**: la reanudación exige salir y
+  relanzar Gentle Shell (no resumir sesión). **Reanudación exacta:** STATUS fresco de
+  `review-8eafdb6eb5115387` (o `review-eced5971081701cc` 6.1 / `review-08027998ffe5a173`
+  T5.9) → capturar el binding reofrecido (forecast → `reviewerRunAcknowledged`). Ningún
+  slot consumido en los 8 intentos; ninguna autoridad quemada. **Aparte, defecto
+  encontrado:** `~/.codex/config.toml` tiene `model = "gpt-6-sol"` y la cuenta ChatGPT
+  rechaza `gpt-6-sol`, `gpt-5.3-codex` y `gpt-5.2-codex` ("not supported when using Codex
+  with a ChatGPT account") → el CLI `codex` del entorno está roto hasta repuntarlo.
 - **L16-a (2026-11-06, native review of 6.1 -> correction chain, slice A):** The review
   of lineage `review-eced5971081701cc` — the three-lens group plus refuter, the first
   run after the reviewer relay was repaired — found **3 CRITICALs from a single root**:

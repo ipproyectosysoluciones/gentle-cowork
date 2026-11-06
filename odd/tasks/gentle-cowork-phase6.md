@@ -163,6 +163,20 @@ revisión** (lección del beta) · Runner: Vitest.
   distribuido. El árbol de extensiones de Pi queda como decisión aparte del dueño
   (10 vulnerabilidades, fixes no rompientes disponibles, `--force` degradaría
   `bash-language-server`).
+- **L14 (2026-10-26, RDD del slice 6.2 — mismo 401):** el candidato del 6.2 recibió su
+  START propio: linaje `review-8eafdb6eb5115387` (target
+  `sha256:c511f0cf…416614`, rango committed-only `067b7f1..8a7f676`, 722 líneas, 4
+  archivos: `AGENTS.md`, este doc, `interpreter.ts`, `interpreter.test.ts`), **medium**,
+  lentes readability + reliability, budget 200. Forecasteado (2 corridas) y ejecutado:
+  falla en **1.07 s** con el **mismo 401** (`"This API key does not have access to the
+  requested model"`, `param: model`) que el linaje del 6.1 — `prepared_reviewers: 0`,
+  `mutation_performed: false`, ningún slot consumido. Con esto queda probado que el
+  bloqueo es del **acceso al modelo del relay de revisores**, global a los tres linajes
+  (`review-eced5971081701cc`, `review-08027998ffe5a173`, `review-8eafdb6eb5115387`) y no
+  de ningún candidato. **Decisión:** se commitea este registro aunque el commit mueva el
+  HEAD del linaje — con el relay inutilizable, la frescura del target no vale nada,
+  mientras que el registro durable y el árbol limpio sí; cuando el acceso se restablezca,
+  el START fresco sobre el HEAD final es barato y correcto. No se reintenta más.
 - **L16-a (2026-11-06, native review of 6.1 -> correction chain, slice A):** The review
   of lineage `review-eced5971081701cc` — the three-lens group plus refuter, the first
   run after the reviewer relay was repaired — found **3 CRITICALs from a single root**:

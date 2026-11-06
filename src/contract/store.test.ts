@@ -127,3 +127,68 @@ describe("contract store — fail closed on load", () => {
 		expect(() => openContractStore(path)).toThrow(ContractValidationError);
 	});
 });
+
+describe("contract store — changelog validation on load", () => {
+	const corrupt = (mutate: (envelope: Record<string, unknown>) => void): string => {
+		const path = freshPath();
+		openContractStore(path).draft(t8Contract, "draft");
+		const envelope = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+		mutate(envelope);
+		writeFileSync(path, JSON.stringify(envelope), { mode: 0o600 });
+		return path;
+	};
+
+	it("throws ContractValidationError when a changelog entry is not an object", () => {
+		const path = corrupt((envelope) => {
+			envelope.changelog = [null];
+		});
+		expect(() => openContractStore(path)).toThrow(ContractValidationError);
+	});
+
+	it("throws ContractValidationError when an entry lacks a summary", () => {
+		const path = corrupt((envelope) => {
+			envelope.changelog = [{ version: 1, at: new Date().toISOString() }];
+		});
+		expect(() => openContractStore(path)).toThrow(ContractValidationError);
+	});
+
+	it("throws ContractValidationError when an entry version is not a positive integer", () => {
+		const path = corrupt((envelope) => {
+			envelope.changelog = [{ version: 0, at: new Date().toISOString(), summary: "draft" }];
+		});
+		expect(() => openContractStore(path)).toThrow(ContractValidationError);
+	});
+
+	it("throws ContractValidationError when the last entry disagrees with the envelope version", () => {
+		const path = corrupt((envelope) => {
+			envelope.changelog = [{ version: 7, at: new Date().toISOString(), summary: "draft" }];
+		});
+		expect(() => openContractStore(path)).toThrow(ContractValidationError);
+	});
+
+	it("throws ContractValidationError when entry versions are not 1..N", () => {
+		const path = corrupt((envelope) => {
+			envelope.version = 2;
+			envelope.changelog = [
+				{ version: 2, at: new Date().toISOString(), summary: "skipped a version" },
+				{ version: 2, at: new Date().toISOString(), summary: "duplicate version" },
+			];
+		});
+		expect(() => openContractStore(path)).toThrow(ContractValidationError);
+	});
+
+	it("throws ContractValidationError on an empty changelog for a persisted version", () => {
+		const path = corrupt((envelope) => {
+			envelope.changelog = [];
+		});
+		expect(() => openContractStore(path)).toThrow(ContractValidationError);
+	});
+
+	it("still loads every shape the store itself writes", () => {
+		const path = freshPath();
+		const store = openContractStore(path);
+		store.draft(t8Contract, "draft");
+		store.amend("first amendment", (draft) => draft, 1);
+		expect(openContractStore(path).get()?.changelog.map((entry) => entry.version)).toEqual([1, 2]);
+	});
+});

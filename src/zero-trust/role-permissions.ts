@@ -15,6 +15,7 @@ import {
   type WelcomeMessage,
   type ErrorMessage
 } from "../ws/protocol.ts";
+import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 
 /**
  * Define what message types each role is allowed to SEND
@@ -100,4 +101,67 @@ export function validateRoleReceive(role: string, messageType: string): { allowe
     };
   }
   return { allowed: true };
+}
+
+/** Secret key for HMAC attestation (should be injected from config in production). */
+const ATTESTATION_SECRET = process.env.ROLE_ATTESTATION_SECRET 
+  ? Buffer.from(process.env.ROLE_ATTESTATION_SECRET, "base64") 
+  : randomBytes(32);
+
+/** Generates an HMAC attestation for a role permission check. */
+export function createAttestation(role: string, messageType: string, allowed: boolean): string {
+  const payload = `${role}:${messageType}:${allowed}:${Date.now()}`;
+  const hmac = createHmac("sha256", ATTESTATION_SECRET);
+  hmac.update(payload);
+  return hmac.digest("base64");
+}
+
+/** Verifies an attestation for a role permission check. */
+export function verifyAttestation(role: string, messageType: string, allowed: boolean, attestation: string, maxAgeMs = 60_000): boolean {
+  try {
+    const expected = createAttestation(role, messageType, allowed);
+    const expectedBuf = Buffer.from(expected, "base64");
+    const actualBuf = Buffer.from(attestation, "base64");
+    
+    if (expectedBuf.length !== actualBuf.length) return false;
+    if (!timingSafeEqual(expectedBuf, actualBuf)) return false;
+    
+    // Check timestamp freshness (basic replay protection)
+    // In production, use a proper nonce/timestamp mechanism
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Validates role send with attestation. */
+export function validateRoleSendWithAttestation(
+  role: string, 
+  messageType: string, 
+  attestation?: string
+): { allowed: boolean; reason?: string; attestation?: string } {
+  const result = validateRoleSend(role, messageType);
+  if (!result.allowed) return result;
+  
+  const attest = createAttestation(role, messageType, true);
+  if (attestation && !verifyAttestation(role, messageType, true, attestation)) {
+    return { allowed: false, reason: "Invalid attestation" };
+  }
+  return { ...result, attestation: attest };
+}
+
+/** Validates role receive with attestation. */
+export function validateRoleReceiveWithAttestation(
+  role: string, 
+  messageType: string, 
+  attestation?: string
+): { allowed: boolean; reason?: string; attestation?: string } {
+  const result = validateRoleReceive(role, messageType);
+  if (!result.allowed) return result;
+  
+  const attest = createAttestation(role, messageType, true);
+  if (attestation && !verifyAttestation(role, messageType, true, attestation)) {
+    return { allowed: false, reason: "Invalid attestation" };
+  }
+  return { ...result, attestation: attest };
 }

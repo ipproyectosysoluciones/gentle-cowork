@@ -141,6 +141,20 @@ export interface Heartbeat {
 	timestamp: string;
 }
 
+/** Ping (application-level keepalive) */
+export interface Ping {
+	type: "ping";
+	nodeId: string;
+	timestamp: number; // Unix ms
+}
+
+/** Pong (response to ping) */
+export interface Pong {
+	type: "pong";
+	nodeId: string;
+	timestamp: number; // Unix ms (echo of ping timestamp)
+}
+
 /** Lease management */
 export interface LeaseRequest {
 	type: "lease_request";
@@ -187,7 +201,8 @@ export type ClientMessage =
 	| StepResult
 	| Heartbeat
 	| LeaseRequest
-	| LeaseRelease;
+	| LeaseRelease
+	| Ping;
 
 // Message envelope with replay protection (H5)
 export interface SignedMessage<T extends ClientMessage> {
@@ -200,6 +215,7 @@ export interface SignedMessage<T extends ClientMessage> {
 export type ServerMessage =
 	| AssignStep
 	| LeaseGrant
+	| Pong
 	| { type: "error"; code: string; message: string }
 	| { type: "welcome"; protocol: number; serverNodeId: string };
 
@@ -225,7 +241,16 @@ export function isValidServerMessage(msg: unknown): msg is ServerMessage {
 	return typeof m.type === "string" && [
 		"assign_step",
 		"lease_grant",
+		"pong",
 		"error",
 		"welcome",
 	].includes(m.type);
+}
+
+export function isPing(msg: unknown): msg is Ping {
+	return typeof msg === "object" && msg !== null && (msg as Record<string, unknown>).type === "ping";
+}
+
+export function isPong(msg: unknown): msg is Pong {
+	return typeof msg === "object" && msg !== null && (msg as Record<string, unknown>).type === "pong";
 }

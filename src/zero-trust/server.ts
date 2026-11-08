@@ -32,6 +32,43 @@ function auditLog(action: string, details: string, remoteAddr: string): void {
 	console.error(`[AUDIT:${timestamp}] ${action} ${details} ip=${remoteAddr}`);
 }
 
+/** Token bucket rate limiter for admin API (M1). */
+class AdminRateLimiter {
+	private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
+	private readonly capacity: number;
+	private readonly refillPerSec: number;
+
+	constructor(capacity = 60, refillPerSec = 1) {
+		this.capacity = capacity;
+		this.refillPerSec = refillPerSec;
+	}
+
+	private refill(key: string): void {
+		const now = Date.now();
+		const bucket = this.buckets.get(key);
+		if (!bucket) return;
+		const elapsed = (now - bucket.lastRefill) / 1000;
+		if (elapsed >= 1) {
+			bucket.tokens = Math.min(this.capacity, bucket.tokens + elapsed * this.refillPerSec);
+			bucket.lastRefill = now;
+		}
+	}
+
+	tryConsume(key: string): boolean {
+		let bucket = this.buckets.get(key);
+		if (!bucket) {
+			bucket = { tokens: this.capacity, lastRefill: Date.now() };
+			this.buckets.set(key, bucket);
+		}
+		this.refill(key);
+		if (bucket.tokens >= 1) {
+			bucket.tokens -= 1;
+			return true;
+		}
+		return false;
+	}
+}
+
 /** Sends a protocol-shaped error message to a client. */
 function sendError(ws: WebSocket, code: string, message: string): void {
 	ws.send(JSON.stringify({ type: "error", code, message }));
@@ -41,6 +78,9 @@ export async function startServer(): Promise<void> {
 	// Initialize allowlist store
 	allowlistStore = new AllowlistStore("./allowlist.json");
 
+	// Create rate limiter for admin API (M1)
+	const adminRateLimiter = new AdminRateLimiter(60, 1); // 60 req/min per IP
+
 	// Create an HTTP server listening on the expected port
 	const server = createServer((req, res) => {
 		// Add security headers to all responses (L1)
@@ -48,9 +88,27 @@ export async function startServer(): Promise<void> {
 			res.setHeader(key, value);
 		});
 
-		// Handle admin API endpoints for mutating actions (L2)
+		// Handle admin API endpoints for mutating actions (L2, M1)
 		if (req.method !== "GET" && req.url?.startsWith("/api/admin/")) {
 			const remoteAddr = req.socket.remoteAddress ?? "unknown";
+			
+			// M1: Rate limiting for mutating admin endpoints
+			const mutatingEndpoints = [
+				"/api/admin/allowlist",
+				"/api/admin/pair/start",
+				"/api/admin/pair/regenerate",
+				"/api/admin/pair/cancel",
+				"/api/admin/verify",
+				"/api/admin/unpair",
+			];
+			const isMutating = mutatingEndpoints.some(e => req.url?.startsWith(e));
+			
+			if (isMutating && !adminRateLimiter.tryConsume(req.socket.remoteAddress ?? "unknown")) {
+				res.writeHead(429, { "content-type": "application/json", ...SECURITY_HEADERS });
+				res.end(JSON.stringify({ error: "rate limited" }));
+				auditLog("admin:rate_limited", `ip=${req.socket.remoteAddress ?? "unknown"}`, req.socket.remoteAddress ?? "unknown");
+				return;
+			}
 			
 			if (req.url === "/api/admin/allowlist" && req.method === "POST") {
 				auditLog("admin:allowlist:update", `action=update`, req.socket.remoteAddress ?? "unknown");
@@ -146,10 +204,6 @@ export async function startServer(): Promise<void> {
 }
 
 /** Audit log entry for admin mutating actions (L2). */
-function auditLog(action: string, details: string, remoteAddr: string): void {
-	const timestamp = new Date().toISOString();
-	console.error(`[AUDIT:${timestamp}] ${action} ${details} ip=${remoteAddr}`);
-}
 
 function handleMessage(ws: WebSocket, message: unknown): void {
 	const msgType = (message as Record<string, unknown>).type;

@@ -1411,3 +1411,83 @@ describe("blackboard — Phase 5: step assignment (T5.8)", () => {
     }
   });
 });
+
+describe("blackboard — Phase 6.3: usage metering (STATE_VERSION=3)", () => {
+  const sample = (over: Record<string, unknown> = {}) => ({
+    modelCalls: 1,
+    tokens: null,
+    wallTimeMs: 100,
+    ...over,
+  });
+
+  it("migrates a v2 file: contracts and fence survive, usage starts empty, next write upgrades to v3", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      mkdirSync(dirname(filePath), { recursive: true });
+      const contract = makeContract({ id: "gc-v2" });
+      writeRawState(
+        filePath,
+        JSON.stringify({ version: 2, contracts: [contract], nodes: [], lastFence: 7 }),
+      );
+
+      const board = openBlackboard(filePath);
+      expect(board.listContracts().map((c) => c.id)).toEqual(["gc-v2"]);
+      expect(board.usageTotals()).toEqual({ contracts: 0, modelCalls: 0, tokens: 0, wallTimeMs: 0, events: 0 });
+
+      board.recordUsage({ contractId: "gc-v2", nodeId: "worker-a", sample: sample() });
+      const onDisk = JSON.parse(readFileSync(filePath, "utf8"));
+      expect(onDisk.version).toBe(STATE_VERSION);
+      expect(onDisk.usage["gc-v2"].events).toBe(1);
+      // The v2 contract was not disturbed by the upgrade.
+      expect(onDisk.contracts.map((c: { id: string }) => c.id)).toEqual(["gc-v2"]);
+      expect(onDisk.lastFence).toBe(7);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accumulates usage per contract and node, and it survives a fresh open", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+      board.recordUsage({ contractId: "gc-1", nodeId: "worker-a", sample: sample({ wallTimeMs: 1200 }) });
+      board.recordUsage({ contractId: "gc-1", nodeId: "worker-b", sample: sample({ wallTimeMs: 300, tokens: 50 }) });
+
+      const usage = board.usageByContract("gc-1");
+      expect(usage?.events).toBe(2);
+      expect(usage?.wallTimeMs).toBe(1500);
+      expect(usage?.tokens).toBeNull(); // one sample was unknown
+      expect(usage?.byNode["worker-a"]?.events).toBe(1);
+      expect(usage?.byNode["worker-b"]?.tokens).toBe(50);
+
+      const reopened = openBlackboard(filePath);
+      expect(reopened.usageByContract("gc-1")?.events).toBe(2);
+      expect(reopened.usageTotals()).toEqual({ contracts: 1, modelCalls: 2, tokens: null, wallTimeMs: 1500, events: 2 });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("merges usage from a concurrent handle instead of clobbering it (monotonic by events)", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const first = openBlackboard(filePath);
+      const second = openBlackboard(filePath); // opened before first wrote
+
+      first.recordUsage({ contractId: "gc-1", nodeId: "worker-a", sample: sample({ wallTimeMs: 100 }) });
+      second.recordUsage({ contractId: "gc-1", nodeId: "worker-b", sample: sample({ wallTimeMs: 200 }) });
+
+      const onDisk = openBlackboard(filePath);
+      const usage = onDisk.usageByContract("gc-1");
+      expect(usage?.events).toBe(2);
+      expect(usage?.wallTimeMs).toBe(300);
+      expect(usage?.byNode["worker-a"]?.wallTimeMs).toBe(100);
+      expect(usage?.byNode["worker-b"]?.wallTimeMs).toBe(200);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

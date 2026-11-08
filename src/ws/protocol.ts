@@ -12,7 +12,15 @@ export const CloseCode = {
 	badProtocol: 4400,
 	leaseRejected: 4402,
 	workerExists: 4403,
+	rateLimited: 4405,
+	messageTooLarge: 4406,
 } as const;
+
+// Security limits
+export const MAX_MESSAGE_SIZE = 64 * 1024; // 64KB
+export const MAX_JSON_DEPTH = 32;
+export const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+export const RATE_LIMIT_MAX_REQUESTS = 100; // 100 requests per minute per IP
 
 /** Worker capabilities */
 export type Capability = "planner" | "implementer" | "verifier";

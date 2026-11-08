@@ -3,10 +3,11 @@
  *
  * Simple versioned config file for worker allowlist.
  * In production, this could be replaced with a proper database.
+ * Uses atomic writes (temp file + rename) for durability.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 export interface AllowlistEntry {
 	nodeId: string;
@@ -15,7 +16,7 @@ export interface AllowlistEntry {
 }
 
 /**
- * Allowlist store - simple JSON file based implementation
+ * Allowlist store - simple JSON file based implementation with atomic writes.
  */
 export class AllowlistStore {
 	private readonly filePath: string;
@@ -52,7 +53,12 @@ export class AllowlistStore {
 			version: this.version,
 			allowlist: Object.fromEntries(this.allowlist)
 		};
-		writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf8");
+		// Atomic write: temp file + rename
+		const dir = dirname(this.filePath);
+		mkdirSync(dir, { recursive: true });
+		const tmpPath = `${this.filePath}.tmp`;
+		writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf8");
+		renameSync(tmpPath, this.filePath);
 	}
 
 	/** Add a worker to the allowlist */

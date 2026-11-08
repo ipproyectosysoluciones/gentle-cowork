@@ -104,3 +104,14 @@ datos reales antes de que las guardas bloqueen.
   ProjectContract vía specRef). GuardConfig expuesta en MasterOptions.
   Suite: **300 passed | 3 todo (303)**, `typecheck` exit 0.
   Commit: `feat(guards): Phase 6.4 guards evaluation + master enforcement` (SHA pendiente).
+
+- **L5** T6 dogfood evidence captured. Script `scripts/phase6-dogfood.mjs` ejecuta
+  2 contratos con budgets a través del `meteredStepExecutor`; el blackboard
+  registró:
+  - Totals: 2 contracts, 2 modelCalls, tokens=null (frontera RPC no expone tokens),
+    wallTimeMs=500, events=2.
+  - Por contrato: cada uno con 1 modelCalls, wallTimeMs > 0, byNode=dogfood-worker.
+  Confirmado: el metering captura usage real por contrato y por nodo, y el wrapper
+  `meteredStepExecutor` funciona end-to-end. Tokens quedan `null` porque la
+  frontera RPC (`runSubagentTurn`) no expone usage hoy — gap declarado en L2.1.
+  Suite y typecheck siguen verdes (300 passed | 3 todo (303)).

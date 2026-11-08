@@ -30,6 +30,8 @@ import {
 	type LeaseRequest,
 	type LeaseGrant,
 	type LeaseRelease,
+	type Ping,
+	type Pong,
 	type ClientMessage,
 	type ServerMessage,
 	type Capability,
@@ -270,6 +272,15 @@ export class WSServer {
 							break;
 						}
 
+						case "ping": {
+							if (!authenticated) {
+								this.sendError(ws, "unauthorized", "Not registered");
+								return;
+							}
+							this.handlePing(ws, clientMsg);
+							break;
+						}
+
 						default:
 							this.sendError(ws, "unknown_type", `Unknown message type: ${(clientMsg as ClientMessage).type}`);
 					}
@@ -450,6 +461,22 @@ export class WSServer {
 			worker.lastHeartbeat = Date.now();
 		}
 		this.options.onHeartbeat?.(msg.nodeId);
+	}
+
+	/** Handles application-level ping — responds with pong (L3). */
+	private handlePing(ws: WebSocket, msg: Ping): void {
+		// M3: Validate text field lengths
+		if (!this.validateTextLength("nodeId", msg.nodeId)) {
+			this.log(`Rejected ping: nodeId too long`);
+			return;
+		}
+
+		const pong: Pong = {
+			type: "pong",
+			nodeId: msg.nodeId,
+			timestamp: msg.timestamp,
+		};
+		this.send(ws, pong);
 	}
 
 	private async handleLeaseRequest(ws: WebSocket, msg: LeaseRequest): Promise<void> {

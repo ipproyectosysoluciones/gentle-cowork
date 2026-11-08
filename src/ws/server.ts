@@ -7,7 +7,6 @@
  * Reuses framing pattern from dot-telegram daemon protocol.
  */
 
-import { createServer, type Server } from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import {
 	WS_PORT,
@@ -18,6 +17,7 @@ import {
 	MAX_JSON_DEPTH,
 	RATE_LIMIT_WINDOW_MS,
 	RATE_LIMIT_MAX_REQUESTS,
+	TLSConfig,
 	type RegisterWorker,
 	type AssignStep,
 	type StepResult,
@@ -29,6 +29,9 @@ import {
 	type ServerMessage,
 	type Capability,
 } from "./protocol.ts";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import { readFileSync } from "node:fs";
 
 export interface WorkerRegistration {
 	nodeId: string;
@@ -68,7 +71,7 @@ export interface WSServerOptions {
 }
 
 export class WSServer {
-	httpServer: Server;
+	httpServer: ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
 	private wss: WebSocketServer;
 	private workers = new Map<string, WorkerRegistration>();
 	private lease: LeaseState = { holderNodeId: null, fence: 0, expiresAt: 0 };
@@ -82,15 +85,33 @@ export class WSServer {
 		private readonly port: number = WS_PORT,
 		private readonly bind: string = WS_BIND,
 		private readonly options: WSServerOptions = {},
+		private readonly tls?: TLSConfig,
 	) {
-		this.httpServer = createServer();
+		if (tls) {
+			this.httpServer = createHttpsServer({
+				cert: readFileSync(tls.cert),
+				key: readFileSync(tls.key),
+				ca: tls.ca ? readFileSync(tls.ca) : undefined,
+				requestCert: tls.requestCert ?? false,
+				rejectUnauthorized: tls.rejectUnauthorized ?? false,
+			});
+		} else {
+			this.httpServer = createHttpServer();
+		}
 		this.wss = new WebSocketServer({ server: this.httpServer });
+		this.wss.on("error", (err) => {
+			this.log(`WebSocketServer error: ${err.message}`);
+		});
+		this.wss.on("headers", (headers) => {
+			this.log(`Upgrade headers: ${JSON.stringify(headers)}`);
+		});
 		this.setupWSS();
 	}
 
 	private setupWSS(): void {
 		this.wss.on("connection", (ws, req) => {
 			const remoteAddr = req.socket.remoteAddress ?? "unknown";
+			this.log(`New connection from ${remoteAddr}`);
 			
 			// Rate limiting check
 			if (!this.checkRateLimit(remoteAddr)) {
@@ -405,7 +426,8 @@ export class WSServer {
 	async start(): Promise<void> {
 		return new Promise((resolve) => {
 			this.httpServer.listen(this.port, this.bind, () => {
-				this.log(`WS Server listening on ${this.bind}:${this.port}`);
+				const protocol = this.tls ? "WSS" : "WS";
+				this.log(`${protocol} Server listening on ${this.bind}:${this.port}`);
 				resolve();
 			});
 		});
@@ -431,7 +453,7 @@ export class WSServer {
 
 		// Close HTTP server
 		await new Promise<void>((resolve, reject) => {
-			this.httpServer.close((err) => {
+			this.httpServer.close((err?: Error) => {
 				if (err) reject(err);
 				else {
 					this.log("HTTP server closed");
@@ -469,11 +491,16 @@ export class WSServer {
 // Module-level singleton for test imports
 let serverInstance: WSServer | null = null;
 
-export async function startServer(port = WS_PORT, bind = WS_BIND, options: WSServerOptions = {}): Promise<Server> {
+export async function startServer(
+	port = WS_PORT,
+	bind = WS_BIND,
+	options: WSServerOptions = {},
+	tls?: TLSConfig,
+): Promise<ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>> {
 	if (serverInstance) {
 		throw new Error("Server already running");
 	}
-	serverInstance = new WSServer(port, bind, options);
+	serverInstance = new WSServer(port, bind, options, tls);
 	await serverInstance.start();
 	return serverInstance.httpServer;
 }

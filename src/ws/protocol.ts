@@ -18,6 +18,7 @@ export const CloseCode = {
 
 // Security limits
 export const MAX_MESSAGE_SIZE = 64 * 1024; // 64KB
+export const MAX_INBOUND_TEXT = 5000; // Maximum text length (WhatsApp limit 4096 + margin)
 export const MAX_JSON_DEPTH = 32;
 export const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 export const RATE_LIMIT_MAX_REQUESTS = 100; // 100 requests per minute per IP
@@ -58,7 +59,9 @@ export function generateFence(): number {
 		fence = (fence << 8) | bytes[i];
 	}
 	// Ensure it's positive and reasonable
-	return Math.abs(fence) % Number.MAX_SAFE_INTEGER;
+	const result = Math.abs(fence) % Number.MAX_SAFE_INTEGER;
+	console.error(`[DEBUG generateFence] Generated fence: ${result}`);
+	return result;
 }
 
 /** Generates a cryptographically secure nonce (H5). */

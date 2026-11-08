@@ -14,6 +14,7 @@ import {
 	WS_PROTOCOL_VERSION,
 	CloseCode,
 	MAX_MESSAGE_SIZE,
+	MAX_INBOUND_TEXT,
 	MAX_JSON_DEPTH,
 	RATE_LIMIT_WINDOW_MS,
 	RATE_LIMIT_MAX_REQUESTS,
@@ -302,6 +303,23 @@ export class WSServer {
 		this.send(ws, { type: "error", code, message });
 	}
 
+	/** Validates text field length to prevent oversized inbound content (M3). */
+	private validateTextLength(fieldName: string, value: unknown, maxLen = MAX_INBOUND_TEXT): boolean {
+		if (typeof value === "string" && value.length > maxLen) {
+			this.log(`Text field too long: ${fieldName} (${value.length} > ${maxLen} chars)`);
+			return false;
+		}
+		if (Array.isArray(value)) {
+			for (let i = 0; i < value.length; i++) {
+				if (typeof value[i] === "string" && value[i].length > maxLen) {
+					this.log(`Array element too long: ${fieldName}[${i}] (${value[i].length} > ${maxLen} chars)`);
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
 	private checkRateLimit(ip: string): boolean {
 		const now = Date.now();
 		const entry = this.rateLimitMap.get(ip);
@@ -328,6 +346,23 @@ export class WSServer {
 		// Validate message
 		if (!msg.nodeId || !msg.role || !msg.capabilities || !Array.isArray(msg.capabilities) || !msg.startedAt) {
 			this.sendError(ws, "invalid_registration", "Missing required fields");
+			ws.close(CloseCode.badProtocol);
+			return;
+		}
+
+		// M3: Validate text field lengths
+		if (!this.validateTextLength("nodeId", msg.nodeId)) {
+			this.sendError(ws, "text_too_long", "nodeId exceeds maximum length");
+			ws.close(CloseCode.badProtocol);
+			return;
+		}
+		if (!this.validateTextLength("startedAt", msg.startedAt)) {
+			this.sendError(ws, "text_too_long", "startedAt exceeds maximum length");
+			ws.close(CloseCode.badProtocol);
+			return;
+		}
+		if (!this.validateTextLength("capabilities", msg.capabilities)) {
+			this.sendError(ws, "text_too_long", "capabilities array contains oversized elements");
 			ws.close(CloseCode.badProtocol);
 			return;
 		}
@@ -374,11 +409,42 @@ export class WSServer {
 	}
 
 	private handleStepResult(msg: StepResult, senderNodeId: string): void {
+		// M3: Validate text field lengths
+		if (!this.validateTextLength("contractId", msg.contractId)) {
+			this.log(`Rejected step_result: contractId too long`);
+			return;
+		}
+		if (!this.validateTextLength("artifact", msg.artifact)) {
+			this.log(`Rejected step_result: artifact too long`);
+			return;
+		}
+		if (msg.workerVerdict) {
+			const v = msg.workerVerdict;
+			if (!this.validateTextLength("verdict.contractId", v.contractId)) return;
+			if (!this.validateTextLength("verdict.workerNodeId", v.workerNodeId)) return;
+			if (!this.validateTextLength("verdict.error", v.error)) return;
+			if (!this.validateTextLength("verdict.artifacts", v.artifacts)) return;
+			for (const c of v.criteria) {
+				if (!this.validateTextLength("verdict.criteria.criterion", c.criterion)) return;
+				if (!this.validateTextLength("verdict.criteria.evidence", c.evidence)) return;
+			}
+		}
+
 		this.log(`Step result: ${msg.contractId} ${msg.status} by ${senderNodeId}`);
 		this.options.onStepResult?.(msg, senderNodeId);
 	}
 
 	private handleHeartbeat(msg: Heartbeat): void {
+		// M3: Validate text field lengths
+		if (!this.validateTextLength("nodeId", msg.nodeId)) {
+			this.log(`Rejected heartbeat: nodeId too long`);
+			return;
+		}
+		if (!this.validateTextLength("timestamp", msg.timestamp)) {
+			this.log(`Rejected heartbeat: timestamp too long`);
+			return;
+		}
+
 		const worker = this.workers.get(msg.nodeId);
 		if (worker) {
 			worker.lastHeartbeat = Date.now();
@@ -387,6 +453,12 @@ export class WSServer {
 	}
 
 	private async handleLeaseRequest(ws: WebSocket, msg: LeaseRequest): Promise<void> {
+		// M3: Validate text field lengths
+		if (!this.validateTextLength("nodeId", msg.nodeId)) {
+			this.sendError(ws, "text_too_long", "nodeId exceeds maximum length");
+			return;
+		}
+
 		const worker = this.workers.get(msg.nodeId);
 		if (!worker) {
 			this.sendError(ws, "unauthorized", "Worker not registered");
@@ -440,7 +512,7 @@ export class WSServer {
 					granted: false,
 					reason: "lease_active",
 					fence: this.lease.fence,
-				};
+				}
 				request.resolve(grant);
 				this.log(`Lease rejected for ${request.nodeId}: active holder ${this.lease.holderNodeId} (fence=${this.lease.fence})`);
 			}
@@ -450,6 +522,12 @@ export class WSServer {
 	}
 
 	private handleLeaseRelease(msg: LeaseRelease): void {
+		// M3: Validate text field lengths
+		if (!this.validateTextLength("nodeId", msg.nodeId)) {
+			this.log(`Rejected lease_release: nodeId too long`);
+			return;
+		}
+
 		if (this.lease.holderNodeId === msg.nodeId) {
 			this.log(`Lease released by ${msg.nodeId} (fence=${this.lease.fence})`);
 			this.lease.holderNodeId = null;
@@ -485,7 +563,7 @@ export class WSServer {
 				this.log("WebSocket server closed");
 				resolve();
 			});
-		});
+		}
 
 		// Close HTTP server
 		await new Promise<void>((resolve, reject) => {
@@ -496,7 +574,7 @@ export class WSServer {
 					resolve();
 				}
 			});
-		});
+		}
 	}
 
 	// Test helpers

@@ -483,11 +483,11 @@ export function openBlackboard(filePath: string): Blackboard {
     },
     putContract: (contract, presentedFence) => {
       withWriteLock(() => {
-        // Validate fence inside the lock
+        // Validate fence inside the lock (H3: cryptographic fence must match exactly)
         if (lease && typeof presentedFence === "number") {
-          if (presentedFence < lease.fence) {
+          if (presentedFence !== lease.fence) {
             throw new Error(
-              `Fence rejected: presented ${presentedFence} < current ${lease.fence} (stale holder)`
+              `Fence rejected: presented ${presentedFence} does not match current ${lease.fence} (stale or invalid holder)`
             );
           }
         }
@@ -496,11 +496,11 @@ export function openBlackboard(filePath: string): Blackboard {
     },
     updateStatus: (id, status, nodeId, artifacts, presentedFence, recordArtifacts) => {
       return withWriteLock(() => {
-        // Validate fence inside the lock
+        // Validate fence inside the lock (H3: cryptographic fence must match exactly)
         if (lease && typeof presentedFence === "number") {
-          if (presentedFence < lease.fence) {
+          if (presentedFence !== lease.fence) {
             throw new Error(
-              `Fence rejected: presented ${presentedFence} < current ${lease.fence} (stale holder)`
+              `Fence rejected: presented ${presentedFence} does not match current ${lease.fence} (stale or invalid holder)`
             );
           }
         }
@@ -534,9 +534,9 @@ export function openBlackboard(filePath: string): Blackboard {
       return withWriteLock(() => {
         // Validate fence inside the lock
         if (lease && typeof presentedFence === "number") {
-          if (presentedFence < lease.fence) {
+          if (presentedFence !== lease.fence) {
             throw new Error(
-              `Fence rejected: presented ${presentedFence} < current ${lease.fence} (stale holder)`,
+              `Fence rejected: presented ${presentedFence} does not match current ${lease.fence} (stale or invalid holder)`,
             );
           }
         }
@@ -601,7 +601,7 @@ export function openBlackboard(filePath: string): Blackboard {
     releaseLease: (nodeId, fence) => {
       return withWriteLock(() => {
         if (!lease || lease.holderNodeId !== nodeId) return false;
-        if (fence < lease.fence) return false; // stale release
+        if (fence !== lease.fence) return false; // stale release (H3: exact match)
         lease = undefined;
         return true;
       });

@@ -762,7 +762,7 @@ describe("blackboard — Phase 5: orphan recovery sweep", () => {
       const lastEntry = failed!.history[2];
       expect(lastEntry.status).toBe("failed");
       // H3: Fence is cryptographic, not a simple counter
-      expect(lastEntry.artifacts).toEqual([{ reason: "orphaned", previousFence: lease1!.fence, currentFence: newLease2!.fence }]);
+      expect(lastEntry.artifacts).toEqual([{ reason: "orphaned", previousFence: lease1!.fence, currentFence: lease2!.fence }]);
 
       const requeued = board.getContract("gc-1-retry-1");
       expect(requeued).not.toBeUndefined();

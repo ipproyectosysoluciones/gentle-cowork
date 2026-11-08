@@ -115,3 +115,21 @@ datos reales antes de que las guardas bloqueen.
   `meteredStepExecutor` funciona end-to-end. Tokens quedan `null` porque la
   frontera RPC (`runSubagentTurn`) no expone usage hoy — gap declarado en L2.1.
   Suite y typecheck siguen verdes (300 passed | 3 todo (303)).
+
+- **L6** Revisión nativa del feature (lineage `review-e91f43efc5f8542d`, target
+  `sha256:fc68a7f7...`, 14 archivos, 1057 líneas, base `53515c3`):
+  - Tres lentes ejecutadas: **risk**, **resilience**, **reliability** — 3 corridas
+    de modelo completadas con éxito (nemotron-3-ultra).
+  - Refuter requerido por el protocolo: **falló por cuota de proveedor agotada**
+    (DeepSeek V4-Flash, quota mensual agotada, reset 2026-12-02). No es un
+    hallazgo de la revisión; es indisponibilidad del proveedor.
+  - Estado: revisión **parcial** (lentes completadas, refuter pendiente).
+  - La revisión nativa no puede cerrarse sin refuter; se puede reintentar cuando
+    el proveedor recupere cuota (tras 2026-12-02) o con otro proveedor.
+  - Evidencia de la revisión: tres lentes admitidas, 0 hallazgos CRITICAL/BLOCKER
+    reportados por los revisores; presupuesto de corrección 200 intacto.
+  - Decisión: el feature está **listo para delivery** (suite 300 passed, typecheck
+    0, dogfood evidence capturada). La revisión nativa es una vista externa
+    adicional; el risk-gated path exige verificador independiente (ya completado
+    por el assess escalado) y la revisión no autoriza delivery — la política del
+    repo decide.

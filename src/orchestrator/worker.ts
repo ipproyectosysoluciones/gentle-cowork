@@ -10,6 +10,7 @@
 
 import type { Blackboard, NodeRegistration } from "../blackboard.ts";
 import type { TaskContract } from "../types.ts";
+import type { Budget } from "../contract/schema.ts";
 import type { StepExecutor, WorkerOptions, WorkerStepVerdict } from "./types.ts";
 
 function sleep(ms: number): Promise<void> {
@@ -27,8 +28,11 @@ export class LocalWorker {
   private readonly nodeId: string;
   private readonly pollIntervalMs: number;
   private readonly leaseTtlMs: number;
+  /** Internal worker budget (simplified from schema Budget for local enforcement). */
+  private readonly budget: { modelCalls: number; tokens: number; wallTimeMs: number };
+  private budgetUsed: { modelCalls: number; tokens: number; wallTimeMs: number };
 
-  constructor(options: WorkerOptions) {
+  constructor(options: WorkerOptions & { budget?: { modelCalls: number; tokens: number; wallTimeMs: number } }) {
     this.board = options.board;
     this.executor = options.executor;
     this.nodeId = options.nodeId ?? newNodeId();

@@ -14,6 +14,10 @@ import {
 	WS_BIND,
 	WS_PROTOCOL_VERSION,
 	CloseCode,
+	MAX_MESSAGE_SIZE,
+	MAX_JSON_DEPTH,
+	RATE_LIMIT_WINDOW_MS,
+	RATE_LIMIT_MAX_REQUESTS,
 	type RegisterWorker,
 	type AssignStep,
 	type StepResult,
@@ -71,6 +75,8 @@ export class WSServer {
 	private pendingLeases: PendingLeaseRequest[] = [];
 	private masterNodeId: string = `master-${process.pid}-${Date.now()}`;
 	private leaseProcessing = false;
+	// Rate limiting: Map<IP, { count: number; windowStart: number }>
+	private rateLimitMap = new Map<string, { count: number; windowStart: number }>();
 
 	constructor(
 		private readonly port: number = WS_PORT,
@@ -85,6 +91,14 @@ export class WSServer {
 	private setupWSS(): void {
 		this.wss.on("connection", (ws, req) => {
 			const remoteAddr = req.socket.remoteAddress ?? "unknown";
+			
+			// Rate limiting check
+			if (!this.checkRateLimit(remoteAddr)) {
+				this.log(`Rate limited: ${remoteAddr}`);
+				ws.close(CloseCode.rateLimited, "Rate limited");
+				return;
+			}
+			
 			this.log(`Connection from ${remoteAddr}`);
 
 			let authenticated = false;
@@ -110,12 +124,38 @@ export class WSServer {
 
 			ws.on("message", async (data) => {
 				try {
+					// C3: Message size limit
+					const dataLen = Array.isArray(data)
+						? data.reduce((sum, buf) => sum + buf.length, 0)
+						: data instanceof Buffer
+							? data.length
+							: data.byteLength;
+					if (dataLen > MAX_MESSAGE_SIZE) {
+						this.log(`Message too large from ${remoteAddr}: ${dataLen} bytes`);
+						this.sendError(ws, "message_too_large", `Message exceeds ${MAX_MESSAGE_SIZE} bytes limit`);
+						ws.close(CloseCode.messageTooLarge, "Message too large");
+						return;
+					}
+
 					const raw = data.toString();
 					let msg: unknown;
 					try {
-						msg = JSON.parse(raw);
+						// C3: JSON depth limit to prevent DoS via deeply nested objects
+						let depth = 0;
+						const limitedParse = (str: string): unknown => {
+							return JSON.parse(str, (_key, value) => {
+								if (value !== null && typeof value === "object") {
+									depth++;
+									if (depth > MAX_JSON_DEPTH) {
+										throw new Error("JSON depth exceeded");
+									}
+								}
+								return value;
+							});
+						};
+						msg = limitedParse(raw);
 					} catch {
-						this.sendError(ws, "invalid_json", "Invalid JSON message");
+						this.sendError(ws, "invalid_json", "Invalid JSON message or depth exceeded");
 						return;
 					}
 
@@ -203,6 +243,24 @@ export class WSServer {
 
 	private sendError(ws: WebSocket, code: string, message: string): void {
 		this.send(ws, { type: "error", code, message });
+	}
+
+	private checkRateLimit(ip: string): boolean {
+		const now = Date.now();
+		const entry = this.rateLimitMap.get(ip);
+		
+		if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+			// New window
+			this.rateLimitMap.set(ip, { count: 1, windowStart: now });
+			return true;
+		}
+		
+		if (entry.count >= RATE_LIMIT_MAX_REQUESTS) {
+			return false;
+		}
+		
+		entry.count++;
+		return true;
 	}
 
 	private log(msg: string): void {

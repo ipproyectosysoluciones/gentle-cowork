@@ -171,4 +171,6 @@ export interface WorkerOptions {
   pollIntervalMs?: number;
   /** Short write lease TTL, in ms. */
   leaseTtlMs?: number;
+  /** Budget limits for this worker (H6). */
+  budget?: Budget;
 }

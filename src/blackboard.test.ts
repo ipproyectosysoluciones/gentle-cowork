@@ -348,42 +348,51 @@ describe("blackboard state file (S5)", () => {
 });
 
 describe("blackboard — Phase 5: lease with fencing tokens", () => {
-  it("acquires a lease with fence=1 when no lease exists", () => {
+  it("acquires a lease with a cryptographic fence when no lease exists", () => {
     const tmp = makeTmpDir();
     try {
       const board = openBlackboard(defaultBlackboardPath(tmp));
       const lease = board.acquireLease("master-1");
       expect(lease).not.toBeNull();
       expect(lease!.holderNodeId).toBe("master-1");
-      expect(lease!.fence).toBe(1);
+      // H3: fence is now a cryptographic random number, not a simple counter
+      expect(typeof lease!.fence).toBe("number");
+      expect(lease!.fence).toBeGreaterThan(0);
       expect(new Date(lease!.expiresAt).getTime()).toBeGreaterThan(Date.now());
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("increments fence on subsequent acquire after release", () => {
+  it("generates a new cryptographic fence on subsequent acquire after release", () => {
     const tmp = makeTmpDir();
     try {
       const board = openBlackboard(defaultBlackboardPath(tmp));
       const lease1 = board.acquireLease("master-1");
-      expect(lease1!.fence).toBe(1);
+      expect(typeof lease1!.fence).toBe("number");
+      expect(lease1!.fence).toBeGreaterThan(0);
       board.releaseLease("master-1", lease1!.fence);
       const lease2 = board.acquireLease("master-1");
-      expect(lease2!.fence).toBe(2);
+      expect(typeof lease2!.fence).toBe("number");
+      expect(lease2!.fence).toBeGreaterThan(0);
+      // H3: Fence is cryptographic, not a simple counter
+      expect(lease2!.fence).not.toBe(lease1!.fence + 1);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("increments fence on renew", () => {
+  it("generates a new cryptographic fence on renew", () => {
     const tmp = makeTmpDir();
     try {
       const board = openBlackboard(defaultBlackboardPath(tmp));
       const lease = board.acquireLease("master-1");
       const renewed = board.renewLease("master-1", lease!.fence);
       expect(renewed).not.toBeNull();
-      expect(renewed!.fence).toBe(lease!.fence + 1);
+      // H3: Fence is cryptographic, not a simple counter
+      expect(typeof renewed!.fence).toBe("number");
+      expect(renewed!.fence).toBeGreaterThan(0);
+      expect(renewed!.fence).not.toBe(lease!.fence);
       expect(new Date(renewed!.expiresAt).getTime()).toBeGreaterThanOrEqual(new Date(lease!.expiresAt).getTime());
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -420,12 +429,12 @@ describe("blackboard — Phase 5: lease with fencing tokens", () => {
     const tmp = makeTmpDir();
     try {
       const board = openBlackboard(defaultBlackboardPath(tmp));
-      const lease = board.acquireLease("master-1");
-      board.releaseLease("master-1", lease!.fence);
-      board.acquireLease("master-1");
-
+      const lease1 = board.acquireLease("master-1");
+      board.releaseLease("master-1", lease1!.fence);
+      const lease2 = board.acquireLease("master-1");
+      // lease1.fence is now stale (lease2 has a new fence)
       const contract = makeContract({ id: "gc-1" });
-      expect(() => board.putContract(contract, lease!.fence)).toThrow(/Fence rejected/);
+      expect(() => board.putContract(contract, lease1!.fence)).toThrow(/Fence rejected/);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -435,12 +444,12 @@ describe("blackboard — Phase 5: lease with fencing tokens", () => {
     const tmp = makeTmpDir();
     try {
       const board = openBlackboard(defaultBlackboardPath(tmp));
-      const lease = board.acquireLease("master-1");
+      const lease1 = board.acquireLease("master-1");
       board.putContract(makeContract({ id: "gc-1" }));
-      board.releaseLease("master-1", lease!.fence);
-      board.acquireLease("master-1");
-
-      expect(() => board.updateStatus("gc-1", "in_progress", "test-node", undefined, lease!.fence)).toThrow(/Fence rejected/);
+      board.releaseLease("master-1", lease1!.fence);
+      const lease2 = board.acquireLease("master-1");
+      // lease1.fence is now stale (lease2 has a new fence)
+      expect(() => board.updateStatus("gc-1", "in_progress", "test-node", undefined, lease1!.fence)).toThrow(/Fence rejected/);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -474,7 +483,7 @@ describe("blackboard — Phase 5: lease with fencing tokens", () => {
     }
   });
 
-  it("lease expires after TTL and new acquire gets higher fence", () => {
+  it("lease expires after TTL and new acquire gets new cryptographic fence", () => {
     const tmp = makeTmpDir();
     try {
       const board = openBlackboard(defaultBlackboardPath(tmp));
@@ -482,13 +491,16 @@ describe("blackboard — Phase 5: lease with fencing tokens", () => {
       const start = Date.now();
       while (Date.now() - start < 10) { /* busy wait */ }
       const newLease = board.acquireLease("master-1");
-      expect(newLease!.fence).toBe(lease!.fence + 1);
+      // H3: Fence is cryptographic, not a simple counter
+      expect(typeof newLease!.fence).toBe("number");
+      expect(newLease!.fence).toBeGreaterThan(0);
+      expect(newLease!.fence).not.toBe(lease!.fence + 1);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("persists lease across restarts", () => {
+  it("persists lease across restarts with new cryptographic fence", () => {
     const tmp = makeTmpDir();
     try {
       const filePath = defaultBlackboardPath(tmp);
@@ -499,7 +511,8 @@ describe("blackboard — Phase 5: lease with fencing tokens", () => {
       const lease = restarted.getLease();
       expect(lease).not.toBeUndefined();
       expect(lease!.holderNodeId).toBe("master-1");
-      expect(lease!.fence).toBe(1);
+      expect(typeof lease!.fence).toBe("number");
+      expect(lease!.fence).toBeGreaterThan(0);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -720,7 +733,7 @@ describe("blackboard — Phase 5: orphan recovery sweep", () => {
     try {
       const filePath = defaultBlackboardPath(tmp);
       const board = openBlackboard(filePath);
-      const lease = board.acquireLease("master-1");
+      const lease1 = board.acquireLease("master-1");
       board.registerNode(makeNode({ nodeId: "worker-1", lastHeartbeat: new Date(Date.now() - 35000).toISOString() }));
 
       const contract = makeContract({
@@ -729,14 +742,14 @@ describe("blackboard — Phase 5: orphan recovery sweep", () => {
         version: 2,
         history: [
           { status: "pending", version: 1, nodeId: "worker-1", timestamp: new Date().toISOString() },
-          { status: "in_progress", version: 2, nodeId: "worker-1", timestamp: new Date().toISOString(), leaseFence: lease!.fence },
+          { status: "in_progress", version: 2, nodeId: "worker-1", timestamp: new Date().toISOString(), leaseFence: lease1!.fence },
         ],
-        leaseFence: lease!.fence,
+        leaseFence: lease1!.fence,
       });
-      board.putContract(contract, lease!.fence);
+      board.putContract(contract, lease1!.fence);
 
-      board.releaseLease("master-1", lease!.fence);
-      const newLease = board.acquireLease("master-1");
+      board.releaseLease("master-1", lease1!.fence);
+      const lease2 = board.acquireLease("master-1");
 
       const result = board.runOrphanRecovery();
       expect(result.recovered).toBe(1);
@@ -748,7 +761,8 @@ describe("blackboard — Phase 5: orphan recovery sweep", () => {
       expect(failed?.history).toHaveLength(3);
       const lastEntry = failed!.history[2];
       expect(lastEntry.status).toBe("failed");
-      expect(lastEntry.artifacts).toEqual([{ reason: "orphaned", previousFence: lease!.fence, currentFence: newLease!.fence }]);
+      // H3: Fence is cryptographic, not a simple counter
+      expect(lastEntry.artifacts).toEqual([{ reason: "orphaned", previousFence: lease1!.fence, currentFence: newLease2!.fence }]);
 
       const requeued = board.getContract("gc-1-retry-1");
       expect(requeued).not.toBeUndefined();
@@ -831,11 +845,15 @@ describe("blackboard — Phase 5: orphan recovery sweep", () => {
       const board = openBlackboard(filePath);
       board.registerNode(makeNode({ nodeId: "worker-1", lastHeartbeat: new Date(Date.now() - 35000).toISOString() }));
       const lease1 = board.acquireLease("master-1");
-      expect(lease1!.fence).toBe(1);
+      expect(typeof lease1!.fence).toBe("number");
+      expect(lease1!.fence).toBeGreaterThan(0);
       board.putContract(contract, lease1!.fence);
       board.releaseLease("master-1", lease1!.fence);
       const lease2 = board.acquireLease("master-1");
-      expect(lease2!.fence).toBe(2);
+      expect(typeof lease2!.fence).toBe("number");
+      expect(lease2!.fence).toBeGreaterThan(0);
+      // H3: Fence is cryptographic, not a simple counter
+      expect(lease2!.fence).not.toBe(lease1!.fence);
 
       const result = board.runOrphanRecovery();
       expect(result.recovered).toBe(1);

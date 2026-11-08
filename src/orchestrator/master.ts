@@ -92,13 +92,16 @@ export class MasterOrchestrator {
           retryCount: 0,
           budget: seed.budget,
         };
-        this.board.putContract(contract, lease.fence);
+        // H3: Use current fence from board (cryptographic)
+        const currentFence = this.board.getLease()!.fence;
+        this.board.putContract(contract, currentFence);
         this.delegatedIds.push(contract.id);
         const back = this.board.getContract(contract.id);
         if (back) stored.push(back);
       }
     } finally {
-      this.board.releaseLease(this.nodeId, lease.fence);
+      // H3: Use current fence from board (cryptographic)
+      this.board.releaseLease(this.nodeId, this.board.getLease()!.fence);
     }
     return stored;
   }

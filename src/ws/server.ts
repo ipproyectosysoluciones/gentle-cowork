@@ -18,6 +18,10 @@ import {
 	RATE_LIMIT_WINDOW_MS,
 	RATE_LIMIT_MAX_REQUESTS,
 	TLSConfig,
+	validateWSBind,
+	validateWSPort,
+	generateNonce,
+	isTimestampFresh,
 	type RegisterWorker,
 	type AssignStep,
 	type StepResult,
@@ -68,6 +72,8 @@ export interface WSServerOptions {
 	onWorkerRegistered?: (reg: WorkerRegistrationSummary) => void;
 	onStepResult?: (msg: StepResult, senderNodeId: string) => void;
 	onHeartbeat?: (nodeId: string) => void;
+	/** Optional allowlist for pre-registration connection filtering (H1). */
+	allowedNodeIds?: Set<string>;
 }
 
 export class WSServer {
@@ -82,8 +88,8 @@ export class WSServer {
 	private rateLimitMap = new Map<string, { count: number; windowStart: number }>();
 
 	constructor(
-		private readonly port: number = WS_PORT,
-		private readonly bind: string = WS_BIND,
+		private readonly port: number = validateWSPort(process.env.WS_PORT),
+		private readonly bind: string = validateWSBind(process.env.WS_BIND),
 		private readonly options: WSServerOptions = {},
 		private readonly tls?: TLSConfig,
 	) {
@@ -112,6 +118,22 @@ export class WSServer {
 		this.wss.on("connection", (ws, req) => {
 			const remoteAddr = req.socket.remoteAddress ?? "unknown";
 			this.log(`New connection from ${remoteAddr}`);
+			
+			// H1: Early allowlist check - reject connections from unknown nodes before WS upgrade
+			// The client must send nodeId in a header or query param for pre-filtering
+			if (this.options.allowedNodeIds) {
+				// Check for nodeId in query params or headers
+				const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+				const nodeIdFromQuery = url.searchParams.get("nodeId");
+				const nodeIdFromHeader = req.headers["x-node-id"] as string | undefined;
+				const nodeId = nodeIdFromQuery ?? nodeIdFromHeader;
+				
+				if (!nodeId || !this.options.allowedNodeIds.has(nodeId)) {
+					this.log(`H1: Rejected connection from ${remoteAddr} - nodeId not in allowlist: ${nodeId ?? "missing"}`);
+					ws.close(CloseCode.unauthorized, "Node not in allowlist");
+					return;
+				}
+			}
 			
 			// Rate limiting check
 			if (!this.checkRateLimit(remoteAddr)) {
@@ -178,6 +200,20 @@ export class WSServer {
 					} catch {
 						this.sendError(ws, "invalid_json", "Invalid JSON message or depth exceeded");
 						return;
+					}
+
+					// H5: Replay protection - validate nonce and timestamp for non-registration messages
+					if (typeof msg === "object" && msg !== null && "nonce" in msg && "timestamp" in msg) {
+						const signedMsg = msg as { nonce?: string; timestamp?: number };
+						if (!signedMsg.nonce || typeof signedMsg.nonce !== "string") {
+							this.sendError(ws, "invalid_nonce", "Missing or invalid nonce");
+							return;
+						}
+						if (typeof signedMsg.timestamp !== "number" || !isTimestampFresh(signedMsg.timestamp)) {
+							this.sendError(ws, "stale_timestamp", "Message timestamp expired or in future");
+							return;
+						}
+						// TODO: Check nonce uniqueness (store recent nonces with TTL)
 					}
 
 					if (!this.isValidClientMessage(msg)) {

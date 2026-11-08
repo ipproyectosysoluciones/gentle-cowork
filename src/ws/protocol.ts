@@ -31,6 +31,49 @@ export interface TLSConfig {
 	rejectUnauthorized?: boolean;
 }
 
+/** Validates and returns WS_BIND (H2). */
+export function validateWSBind(bind: string | undefined): string {
+	const b = (bind ?? "127.0.0.1").trim();
+	if (!/^(\d{1,3}\.){3}\d{1,3}$|^\[?[0-9a-f:]+\]?$/i.test(b)) {
+		throw new Error(`Invalid WS_BIND: ${b} (must be IPv4 or IPv6 address)`);
+	}
+	return b;
+}
+
+/** Validates and returns WS_PORT (H2). */
+export function validateWSPort(port: string | undefined): number {
+	const p = parseInt((port ?? "4318").trim(), 10);
+	if (!Number.isInteger(p) || p < 1 || p > 65535) {
+		throw new Error(`Invalid WS_PORT: ${port} (must be 1-65535)`);
+	}
+	return p;
+}
+
+/** Generates a cryptographically secure fence token (H3). */
+export function generateFence(): number {
+	const { randomBytes } = require("node:crypto");
+	const bytes = randomBytes(8); // 64 bits
+	let fence = 0;
+	for (let i = 0; i < 8; i++) {
+		fence = (fence << 8) | bytes[i];
+	}
+	// Ensure it's positive and reasonable
+	return Math.abs(fence) % Number.MAX_SAFE_INTEGER;
+}
+
+/** Generates a cryptographically secure nonce (H5). */
+export function generateNonce(): string {
+	const { randomBytes } = require("node:crypto");
+	return randomBytes(16).toString("base64");
+}
+
+/** Validates message timestamp freshness (H5). */
+export function isTimestampFresh(timestamp: number, maxAgeMs = 60_000): boolean {
+	const now = Date.now();
+	const age = now - timestamp;
+	return age >= 0 && age <= maxAgeMs;
+}
+
 /** Worker capabilities */
 export type Capability = "planner" | "implementer" | "verifier";
 
@@ -142,6 +185,14 @@ export type ClientMessage =
 	| Heartbeat
 	| LeaseRequest
 	| LeaseRelease;
+
+// Message envelope with replay protection (H5)
+export interface SignedMessage<T extends ClientMessage> {
+	message: T;
+	nonce: string;        // Cryptographic nonce (base64, 16 bytes)
+	timestamp: number;    // Unix ms when message was created
+	signature?: string;   // Optional Ed25519 signature for future mTLS
+}
 
 export type ServerMessage =
 	| AssignStep

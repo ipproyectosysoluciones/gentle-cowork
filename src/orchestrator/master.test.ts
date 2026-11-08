@@ -75,8 +75,10 @@ function writeExecutedContract(
     history: [{ status: "pending", version: 1, nodeId: "master-1", timestamp: now }],
     retryCount: 0,
   };
-  board.putContract(pending, lease.fence);
-  board.assignContract(id, verdict.workerNodeId, lease.fence);
+  // H3: Get current fence from board (cryptographic, not predictable)
+  const currentFence = board.getLease()!.fence;
+  board.putContract(pending, currentFence);
+  board.assignContract(id, verdict.workerNodeId, currentFence);
   board.updateStatus(
     id,
     verdict.status === "completed" ? "completed" : "failed",

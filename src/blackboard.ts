@@ -532,7 +532,7 @@ export function openBlackboard(filePath: string): Blackboard {
     },
     assignContract: (id, workerNodeId, presentedFence) => {
       return withWriteLock(() => {
-        // Validate fence inside the lock
+        // Validate fence inside the lock (H3: cryptographic fence must match exactly)
         if (lease && typeof presentedFence === "number") {
           if (presentedFence !== lease.fence) {
             throw new Error(

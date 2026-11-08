@@ -42,6 +42,7 @@ import {
 	recordUsageSample,
 	type UsageSample,
 } from "./metering.ts";
+import { generateFence } from "./ws/protocol.ts";
 
 /** Directory (inside the project cwd) holding the blackboard state file. */
 export const BLACKBOARD_DIR = ".gentle-cowork";
@@ -568,13 +569,14 @@ export function openBlackboard(filePath: string): Blackboard {
         const now = new Date();
         const acquiredAt = now.toISOString();
         const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
-        fenceCounter += 1;
+        // H3: Use cryptographic fence instead of predictable counter
+        const fence = generateFence();
         lease = {
           holderNodeId: nodeId,
           acquiredAt,
           expiresAt,
           renewedAt: acquiredAt,
-          fence: fenceCounter,
+          fence,
         };
         return { ...lease };
       });
@@ -585,12 +587,13 @@ export function openBlackboard(filePath: string): Blackboard {
         if (fence < lease.fence) return null; // stale renewal
         const now = new Date();
         const expiresAt = new Date(now.getTime() + DEFAULT_LEASE_TTL_MS).toISOString();
-        fenceCounter += 1;
+        // H3: Use cryptographic fence instead of predictable counter
+        const newFence = generateFence();
         lease = {
           ...lease,
           expiresAt,
           renewedAt: now.toISOString(),
-          fence: fenceCounter,
+          fence: newFence,
         };
         return { ...lease };
       });
@@ -679,7 +682,7 @@ export function openBlackboard(filePath: string): Blackboard {
         return { recovered, requeued };
       });
     },
-    mergeContracts: (incoming) => {
+    mergeContracts: (incoming, writerNodeId?: string) => {
       return withWriteLock(() => {
         let merged = 0;
         for (const inc of incoming) {
@@ -705,6 +708,10 @@ export function openBlackboard(filePath: string): Blackboard {
             }
           }
           // If existing.version > inc.version, keep existing (no merge)
+        }
+        // H4: Log merge with writer identity for audit
+        if (writerNodeId && merged > 0) {
+          console.error(`[blackboard] Merged ${merged} contracts from disk (writer: ${writerNodeId})`);
         }
         return merged;
       });

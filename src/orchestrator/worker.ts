@@ -34,6 +34,26 @@ export class LocalWorker {
     this.nodeId = options.nodeId ?? newNodeId();
     this.pollIntervalMs = options.pollIntervalMs ?? 250;
     this.leaseTtlMs = options.leaseTtlMs ?? 10_000;
+    this.budget = options.budget ?? { modelCalls: Infinity, tokens: Infinity, wallTimeMs: Infinity };
+    this.budgetUsed = { modelCalls: 0, tokens: 0, wallTimeMs: 0 };
+  }
+
+  /** Checks if any budget limit is exceeded. */
+  private isBudgetExceeded(): boolean {
+    return (
+      this.budgetUsed.modelCalls >= this.budget.modelCalls ||
+      this.budgetUsed.tokens >= this.budget.tokens ||
+      this.budgetUsed.wallTimeMs >= this.budget.wallTimeMs
+    );
+  }
+
+  /** Updates budget usage from verdict and execution time. */
+  private updateBudget(verdict: WorkerStepVerdict, wallTimeMs: number): void {
+    this.budgetUsed.wallTimeMs += wallTimeMs;
+    // If verdict contains budget metadata, use it; otherwise estimate
+    if (verdict.artifacts.length > 0) {
+      this.budgetUsed.modelCalls += 1; // Approximate
+    }
   }
 
   /** Registers this worker on the blackboard (implementer capability). */
@@ -66,6 +86,20 @@ export class LocalWorker {
    * superseded mid-flight; execution itself is never re-run on write retries.
    */
   async executeAssigned(contract: TaskContract): Promise<WorkerStepVerdict> {
+    // H6: Check budget before execution
+    if (this.isBudgetExceeded()) {
+      return {
+        contractId: contract.id,
+        workerNodeId: this.nodeId,
+        status: "failed",
+        criteria: [],
+        artifacts: [],
+        executedAt: new Date().toISOString(),
+        error: "Worker budget exceeded",
+      };
+    }
+
+    const startTime = Date.now();
     let verdict: WorkerStepVerdict;
     try {
       verdict = await this.executor.execute(contract);
@@ -80,6 +114,9 @@ export class LocalWorker {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+
+    // Update budget usage from verdict artifacts/metadata
+    this.updateBudget(verdict, Date.now() - startTime);
     this.writeResult(contract, verdict);
     return verdict;
   }

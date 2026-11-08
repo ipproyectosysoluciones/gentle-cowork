@@ -18,6 +18,8 @@ import {
 	type WelcomeMessage,
 	type ServerMessage,
 	type WorkerVerdictPayload,
+	type Ping,
+	type Pong,
 } from "../ws/protocol.ts";
 
 /** Configuration options for RemoteWorkerClient. */
@@ -41,6 +43,9 @@ interface ClientState {
 	stopped: boolean;
 	heartbeatTimer: NodeJS.Timeout | null;
 	reconnectTimer: NodeJS.Timeout | null;
+	pingTimer: NodeJS.Timeout | null;
+	pendingPingTimestamp: number | null;
+	pongTimeoutTimer: NodeJS.Timeout | null;
 	startResolve: ((value: void) => void) | null;
 	startReject: ((reason: Error) => void) | null;
 }
@@ -54,6 +59,10 @@ interface ClientState {
  *   3. On server-initiated disconnect: waits reconnectDelayMs, then reconnects + re-registers.
  *   4. stop() — clears timers, closes socket, prevents further reconnection.
  */
+// Application-level ping/pong config (L3)
+const PING_INTERVAL_MS = 30_000;
+const PONG_TIMEOUT_MS = 10_000;
+
 export class RemoteWorkerClient {
 	private readonly url: string;
 	private readonly nodeId: string;
@@ -74,6 +83,9 @@ export class RemoteWorkerClient {
 			stopped: false,
 			heartbeatTimer: null,
 			reconnectTimer: null,
+			pingTimer: null,
+			pendingPingTimestamp: null,
+			pongTimeoutTimer: null,
 			startResolve: null,
 			startReject: null,
 		};
@@ -177,6 +189,9 @@ export class RemoteWorkerClient {
 				break;
 			case "assign_step":
 				this.handleAssignStep(msg);
+				break;
+			case "pong":
+				this.handlePong(msg);
 				break;
 			case "error":
 				this.log(`Server error: ${msg.code} - ${msg.message}`);
@@ -289,6 +304,9 @@ export class RemoteWorkerClient {
 		}, this.heartbeatMs);
 		// Send initial heartbeat immediately
 		this.sendHeartbeat();
+
+		// Also start application-level ping/pong (L3)
+		this.startPingTimer();
 	}
 
 	/** Sends a single heartbeat. */
@@ -311,9 +329,69 @@ export class RemoteWorkerClient {
 		}
 	}
 
+	/** Starts the application-level ping timer (L3). */
+	private startPingTimer(): void {
+		this.clearPingTimer();
+		this.state.pingTimer = setInterval(() => {
+			this.sendPing();
+		}, PING_INTERVAL_MS);
+		// Send initial ping immediately
+		this.sendPing();
+	}
+
+	/** Sends a single application-level ping (L3). */
+	private sendPing(): void {
+		if (!this.state.ws || this.state.ws.readyState !== WebSocket.OPEN) return;
+
+		const timestamp = Date.now();
+		const msg: Ping = {
+			type: "ping",
+			nodeId: this.nodeId,
+			timestamp,
+		};
+		this.state.ws.send(JSON.stringify(msg));
+
+		// Track pending ping and set pong timeout
+		this.state.pendingPingTimestamp = timestamp;
+		this.state.pongTimeoutTimer = setTimeout(() => {
+			this.log(`Pong timeout for ping ${timestamp} — closing connection`);
+			if (this.state.ws) {
+				this.state.ws.close(1006, "Pong timeout");
+			}
+		}, PONG_TIMEOUT_MS);
+	}
+
+	/** Handles pong response (L3). */
+	private handlePong(msg: Pong): void {
+		// Clear pong timeout
+		if (this.state.pongTimeoutTimer) {
+			clearTimeout(this.state.pongTimeoutTimer);
+			this.state.pongTimeoutTimer = null;
+		}
+		// Verify pong matches our pending ping (optional but good practice)
+		if (this.state.pendingPingTimestamp !== null && msg.timestamp !== this.state.pendingPingTimestamp) {
+			this.log(`Pong timestamp mismatch: expected ${this.state.pendingPingTimestamp}, got ${msg.timestamp}`);
+		}
+		this.state.pendingPingTimestamp = null;
+	}
+
+	/** Clears the ping timer. */
+	private clearPingTimer(): void {
+		if (this.state.pingTimer) {
+			clearInterval(this.state.pingTimer);
+			this.state.pingTimer = null;
+		}
+		if (this.state.pongTimeoutTimer) {
+			clearTimeout(this.state.pongTimeoutTimer);
+			this.state.pongTimeoutTimer = null;
+		}
+		this.state.pendingPingTimestamp = null;
+	}
+
 	/** Clears all timers. */
 	private clearTimers(): void {
 		this.clearHeartbeatTimer();
+		this.clearPingTimer();
 		if (this.state.reconnectTimer) {
 			clearTimeout(this.state.reconnectTimer);
 			this.state.reconnectTimer = null;
@@ -323,6 +401,7 @@ export class RemoteWorkerClient {
 	/** Handles WebSocket close — schedules reconnect if not stopped. */
 	private handleClose(code: number): void {
 		this.clearHeartbeatTimer();
+		this.clearPingTimer();
 		this.state.connecting = false;
 		this.state.ws = null;
 

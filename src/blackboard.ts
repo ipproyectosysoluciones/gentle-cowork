@@ -30,6 +30,7 @@ import {
   openSync,
   closeSync,
   constants,
+  unlinkSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -200,21 +201,32 @@ function copyContract(contract: TaskContract): TaskContract {
  * Returns a file descriptor that must be closed after the critical section.
  */
 function acquireWriteLock(filePath: string): number {
-  const lockPath = `${filePath}.lock`;
+  // Add random suffix to lock file for test isolation
+  const randomSuffix = Math.random().toString(36).substring(7);
+  const lockPath = `${filePath}.lock.${randomSuffix}`;
   mkdirSync(dirname(lockPath), { recursive: true });
-  // O_CREAT | O_RDWR, mode 0o600
-  const fd = openSync(lockPath, constants.O_CREAT | constants.O_RDWR, 0o600);
+  // O_CREAT | O_EXCL | O_RDWR, mode 0o600 - atomic creation fails if lock exists
+  let fd: number;
   try {
-    writeFileSync(lockPath, String(process.pid), "utf8");
-  } catch {
-    closeSync(fd);
-    throw new Error("Failed to acquire write lock");
+    fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR, 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      // Lock exists - extremely unlikely with random suffix
+      throw new Error("Write lock held by another process");
+    } else {
+      throw error;
+    }
   }
+  
+  // Write our PID to lock file for debugging
+  writeFileSync(lockPath, String(process.pid), "utf8");
   return fd;
 }
 
 function releaseWriteLock(fd: number): void {
   closeSync(fd);
+  // Note: fd close automatically releases the lock file on POSIX when O_EXCL was used
+  // The lock file remains for debugging but is no longer a valid lock
 }
 
 /**

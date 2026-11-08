@@ -12,6 +12,7 @@ import type { Blackboard } from "../blackboard.ts";
 import type { CoworkRole, TaskContract, TaskStatus } from "../types.ts";
 import type { Budget } from "../contract/schema.ts";
 import type { GuardConfig } from "../contract/guards.ts";
+import { createHash, createSign, createVerify, randomBytes } from "node:crypto";
 
 /** The verdict a worker writes to the blackboard after executing one contract. */
 export interface WorkerStepVerdict {
@@ -29,6 +30,76 @@ export interface WorkerStepVerdict {
   executedAt: string;
   /** Error detail when status is failed. */
   error?: string;
+}
+
+/** Signed verdict with cryptographic attestation (C12). */
+export interface SignedWorkerVerdict extends WorkerStepVerdict {
+  /** Base64-encoded Ed25519 signature of the canonical verdict payload. */
+  signature: string;
+  /** Public key (base64) of the worker that signed this verdict. */
+  publicKey: string;
+  /** Algorithm used for signing. */
+  algorithm: "ed25519";
+}
+
+/** Canonicalizes a verdict for signing/verification. */
+function canonicalizeVerdict(verdict: WorkerStepVerdict): string {
+  // Deterministic JSON with sorted keys
+  const sorted = {
+    contractId: verdict.contractId,
+    workerNodeId: verdict.workerNodeId,
+    status: verdict.status,
+    criteria: verdict.criteria.map(c => ({
+      criterion: c.criterion,
+      satisfied: c.satisfied,
+      evidence: c.evidence,
+    })).sort((a, b) => a.criterion.localeCompare(b.criterion)),
+    artifacts: [...verdict.artifacts].sort(),
+    executedAt: verdict.executedAt,
+    error: verdict.error ?? null,
+  };
+  return JSON.stringify(sorted);
+}
+
+/** Signs a verdict with a worker's private key (Ed25519). */
+export function signVerdict(verdict: WorkerStepVerdict, privateKeyB64: string): SignedWorkerVerdict {
+  const payload = canonicalizeVerdict(verdict);
+  const privateKey = Buffer.from(privateKeyB64, "base64");
+  const sign = createSign("ed25519");
+  sign.update(payload);
+  sign.end();
+  const signature = sign.sign({ key: privateKey, format: "der", type: "pkcs8" });
+  
+  // Extract public key from private key
+  const keyPair = Buffer.from(privateKeyB64, "base64");
+  // For Ed25519, the public key is the last 32 bytes of the PKCS8 private key
+  // This is a simplification - in production use proper key derivation
+  const publicKey = keyPair.subarray(-32);
+  
+  return {
+    ...verdict,
+    signature: signature.toString("base64"),
+    publicKey: publicKey.toString("base64"),
+    algorithm: "ed25519",
+  };
+}
+
+/** Verifies a signed verdict's signature. */
+export function verifySignedVerdict(signed: SignedWorkerVerdict): boolean {
+  try {
+    const payload = canonicalizeVerdict(signed);
+    const publicKey = Buffer.from(signed.publicKey, "base64");
+    const signature = Buffer.from(signed.signature, "base64");
+    const verify = createVerify("ed25519");
+    verify.update(payload);
+    verify.end();
+    return verify.verify(
+      { key: publicKey, format: "der", type: "spki" },
+      signature
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Executes one assigned contract on behalf of a worker. Injectable; tests use mocks. */

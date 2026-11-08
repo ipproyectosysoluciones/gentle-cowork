@@ -8,7 +8,95 @@
 
 export type CoworkRole = "planner" | "implementer" | "verifier";
 
+/**
+ * Validates and normalizes a path to prevent traversal attacks.
+ * Returns normalized path relative to project root, or throws.
+ */
+function validateScopePath(projectRoot: string, path: string): string {
+  const normalized = normalize(path);
+  
+  // Must not be absolute (unless it's within project root)
+  if (isAbsolute(normalized) && !normalized.startsWith(resolve(projectRoot))) {
+    throw new Error(`Scope path must be within project root: ${path}`);
+  }
+  
+  // Check for directory traversal attempts
+  const rel = relative(resolve(projectRoot), resolve(projectRoot, normalized));
+  if (rel.startsWith("..") || normalized.includes("..")) {
+    throw new Error(`Path traversal detected in scope: ${path}`);
+  }
+  
+  return normalized;
+}
+
+/**
+ * Validates an artifact path/reference.
+ * Allows strings (file paths) and objects (structured artifacts).
+ */
+function validateArtifact(projectRoot: string, artifact: string | Record<string, unknown>): void {
+  if (typeof artifact === "string") {
+    validateScopePath(projectRoot, artifact);
+  } else if (typeof artifact === "object" && artifact !== null) {
+    // Structured artifact - validate any path-like fields
+    for (const [key, value] of Object.entries(artifact)) {
+      if (typeof value === "string" && (key.includes("path") || key.includes("file"))) {
+        validateScopePath(projectRoot, value);
+      }
+    }
+  }
+}
+
+/**
+ * Validates specRef - must be a relative path to an ODD feature document.
+ */
+function validateSpecRef(projectRoot: string, specRef: string): string {
+  const normalized = normalize(specRef);
+  if (!normalized.startsWith("odd/tasks/") && !normalized.startsWith("./odd/tasks/")) {
+    throw new Error(`specRef must point to an ODD feature document: ${specRef}`);
+  }
+  // Ensure it's within project root
+  const fullPath = resolve(projectRoot, normalized);
+  if (!fullPath.startsWith(resolve(projectRoot))) {
+    throw new Error(`specRef path traversal detected: ${specRef}`);
+  }
+  return normalized;
+}
+
+/**
+ * Creates a TaskContract with full path validation (C10, C11).
+ * Throws if any path is invalid or attempts traversal.
+ */
+export function createTaskContract(
+  projectRoot: string,
+  contract: Omit<TaskContract, "id" | "version" | "history" | "status" | "leaseFence" | "workerNodeId" | "retryCount">
+): TaskContract {
+  // Validate all paths
+  const validatedScope = contract.scope.map((p) => validateScopePath(projectRoot, p));
+  for (const artifact of contract.artifacts) {
+    validateArtifact(projectRoot, artifact);
+  }
+  const validatedSpecRef = validateSpecRef(projectRoot, contract.specRef);
+  
+  const now = new Date().toISOString();
+  return {
+    ...contract,
+    id: `gc-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+    scope: validatedScope,
+    specRef: validatedSpecRef,
+    artifacts: [],
+    status: "pending",
+    version: 1,
+    history: [{
+      status: "pending",
+      version: 1,
+      nodeId: "master",
+      timestamp: now,
+    }],
+  };
+}
+
 import type { Budget } from "./contract/schema.ts";
+import { resolve, normalize, isAbsolute, relative } from "node:path";
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "failed" | "paused";
 

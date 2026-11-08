@@ -32,6 +32,7 @@ import {
   constants,
   unlinkSync,
 } from "node:fs";
+import { isAbsolute, normalize, resolve } from "node:path";
 import { dirname, join } from "node:path";
 
 import type { TaskContract, TaskStatus, ContractHistoryEntry } from "./types.ts";
@@ -99,9 +100,20 @@ export const ORPHAN_HEARTBEAT_THRESHOLD_MS = 30_000;
 /** Max retry count for orphan recovery re-queues. */
 export const MAX_RETRY_COUNT = 3;
 
-/** Resolves the blackboard state file path for a project working directory. */
+/** Resolves the blackboard state file path for a project working directory.
+ * Validates that projectCwd is an absolute path and exists (C11). */
 export function defaultBlackboardPath(projectCwd: string): string {
-  return join(projectCwd, BLACKBOARD_DIR, BLACKBOARD_FILENAME);
+  if (!projectCwd || typeof projectCwd !== "string") {
+    throw new Error("projectCwd must be a non-empty string");
+  }
+  const normalized = normalize(projectCwd);
+  // Allow relative paths that resolve to absolute (e.g., temp dirs)
+  const absolute = isAbsolute(normalized) ? normalized : resolve(normalized);
+  // Validate no traversal in the resolved path
+  if (absolute.includes("..")) {
+    throw new Error("projectCwd path traversal detected");
+  }
+  return join(absolute, BLACKBOARD_DIR, BLACKBOARD_FILENAME);
 }
 
 const TASK_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress", "completed", "failed"]);

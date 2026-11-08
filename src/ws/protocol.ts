@@ -22,6 +22,15 @@ export const MAX_JSON_DEPTH = 32;
 export const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 export const RATE_LIMIT_MAX_REQUESTS = 100; // 100 requests per minute per IP
 
+// TLS configuration
+export interface TLSConfig {
+	cert: string;  // PEM-encoded certificate
+	key: string;   // PEM-encoded private key
+	ca?: string;   // PEM-encoded CA for client cert verification (mTLS)
+	requestCert?: boolean;
+	rejectUnauthorized?: boolean;
+}
+
 /** Worker capabilities */
 export type Capability = "planner" | "implementer" | "verifier";
 

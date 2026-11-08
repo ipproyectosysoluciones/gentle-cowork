@@ -14,6 +14,8 @@ import { createRpcSubagent, runSubagentTurn } from "../subagent.ts";
 import { buildImplementPrompt, parseArtifact } from "../roles.ts";
 import type { StepExecutor, WorkerStepVerdict } from "./types.ts";
 import type { TaskContract } from "../types.ts";
+import type { Blackboard } from "../blackboard.ts";
+import type { UsageSample } from "../metering.ts";
 
 /** Options for the RPC step executor. */
 export interface RpcExecutorOptions {
@@ -93,6 +95,40 @@ export function createRpcStepExecutor(options: RpcExecutorOptions = {}): StepExe
           workerNodeId,
           `implementer response could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
         );
+      }
+    },
+  };
+}
+
+/**
+ * Wraps any StepExecutor and records one usage sample per execute() into
+ * the given Blackboard. The sample captures:
+ * - modelCalls: 1 (each execute is one RPC call)
+ * - wallTimeMs: elapsed real time of the execute() call
+ * - tokens: null (the RPC boundary does not expose token usage yet; decision
+ *   L2.1 in odd/tasks/phase6-oracle.md). When the RPC layer exposes tokens,
+ *   this wrapper can be updated without changing the accumulator.
+ *
+ * This is a pure wrapper: it does not mutate the inner executor's behavior,
+ * only observes it and records the result.
+ */
+export function meteredStepExecutor(
+  inner: StepExecutor,
+  board: Blackboard,
+  nodeId: string,
+): StepExecutor {
+  return {
+    async execute(contract: TaskContract): Promise<WorkerStepVerdict> {
+      const started = Date.now();
+      try {
+        return await inner.execute(contract);
+      } finally {
+        const sample: UsageSample = {
+          modelCalls: 1,
+          tokens: null,
+          wallTimeMs: Date.now() - started,
+        };
+        board.recordUsage({ contractId: contract.id, nodeId, sample });
       }
     },
   };

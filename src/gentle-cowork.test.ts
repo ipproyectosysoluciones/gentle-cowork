@@ -16,6 +16,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import gentleCoworkExtension from "./gentle-cowork.ts";
+import { STATE_VERSION } from "./blackboard.ts";
 import type { TaskContract } from "./types.ts";
 
 type CommandHandler = RegisteredCommand["handler"];
@@ -313,7 +314,7 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
   /** Reads the persisted contracts straight from the state file on disk. */
   function readBoard(cwd: string): TaskContract[] {
     const raw = JSON.parse(readFileSync(boardPath(cwd), "utf8")) as { version: number; contracts: TaskContract[] };
-    expect(raw.version).toBe(2);
+    expect(raw.version).toBe(STATE_VERSION);
     return raw.contracts;
   }
 

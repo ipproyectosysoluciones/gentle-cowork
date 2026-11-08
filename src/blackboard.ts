@@ -34,6 +34,12 @@ import {
 import { dirname, join } from "node:path";
 
 import type { TaskContract, TaskStatus, ContractHistoryEntry } from "./types.ts";
+import {
+	type ContractUsage,
+	type NodeUsage,
+	recordUsageSample,
+	type UsageSample,
+} from "./metering.ts";
 
 /** Directory (inside the project cwd) holding the blackboard state file. */
 export const BLACKBOARD_DIR = ".gentle-cowork";
@@ -42,7 +48,7 @@ export const BLACKBOARD_DIR = ".gentle-cowork";
 export const BLACKBOARD_FILENAME = "blackboard.json";
 
 /** Current state file format version. */
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
 
 /** The on-disk shape of the blackboard state file. */
 export interface BlackboardState {
@@ -51,6 +57,8 @@ export interface BlackboardState {
   lease?: LeaseInfo;
   nodes: NodeRegistration[];
   lastFence: number;
+  /** Phase 6.3: usage aggregates per contract (v3; absent on v1/v2 files). */
+  usage?: Record<string, ContractUsage>;
 }
 
 /** Lease information with fencing token. */
@@ -125,14 +133,50 @@ function isTaskContract(value: unknown): value is TaskContract {
 function isBlackboardState(value: unknown): value is BlackboardState {
   if (typeof value !== "object" || value === null) return false;
   const s = value as Record<string, unknown>;
-  // Accept both v1 (legacy) and v2 (current) for migration
+  // Accept v1 (legacy), v2 (pre-metering) and v3 (current) for migration
   return (
-    (s.version === 1 || s.version === STATE_VERSION) &&
+    (s.version === 1 || s.version === 2 || s.version === STATE_VERSION) &&
     Array.isArray(s.contracts) &&
     (s.lease === undefined || typeof s.lease === "object") &&
     (s.nodes === undefined || Array.isArray(s.nodes)) &&
     (s.lastFence === undefined || typeof s.lastFence === "number")
   );
+}
+
+/** Type guard: a parsed JSON value is a readable NodeUsage (lenient, per-entry drop). */
+function isNodeUsage(value: unknown): value is NodeUsage {
+  if (typeof value !== "object" || value === null) return false;
+  const n = value as Record<string, unknown>;
+  return (
+    typeof n.modelCalls === "number" &&
+    Number.isFinite(n.modelCalls) &&
+    (n.tokens === null || typeof n.tokens === "number") &&
+    typeof n.wallTimeMs === "number" &&
+    Number.isFinite(n.wallTimeMs) &&
+    typeof n.events === "number" &&
+    Number.isFinite(n.events)
+  );
+}
+
+/** Type guard: a parsed JSON value is a readable ContractUsage (per-entry drop on failure). */
+function isContractUsage(value: unknown): value is ContractUsage {
+  if (!isNodeUsage(value)) return false;
+  const byNode = (value as unknown as Record<string, unknown>).byNode;
+  return typeof byNode === "object" && byNode !== null && Object.values(byNode).every(isNodeUsage);
+}
+
+/** Validates a parsed usage map, dropping malformed entries with one diagnostic line. */
+function parseUsage(value: unknown, filePath: string): Record<string, ContractUsage> {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null) {
+    console.error(`[gentle-cowork] blackboard usage malformed at ${filePath}, starting empty`);
+    return {};
+  }
+  const out: Record<string, ContractUsage> = {};
+  for (const [id, entry] of Object.entries(value)) {
+    if (isContractUsage(entry)) out[id] = entry;
+  }
+  return out;
 }
 
 function errorMessage(error: unknown): string {
@@ -178,14 +222,14 @@ function releaseWriteLock(fd: number): void {
  * (or entry-filtered) board; only a missing file is silent — everything
  * else leaves one diagnostic line in the launcher log.
  */
-function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: LeaseInfo; nodes: NodeRegistration[]; lastFence: number } {
+function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: LeaseInfo; nodes: NodeRegistration[]; lastFence: number; usage: Record<string, ContractUsage> } {
   let raw: string;
   try {
     raw = readFileSync(filePath, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { contracts: [], nodes: [], lastFence: 0 };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { contracts: [], nodes: [], lastFence: 0, usage: {} };
     console.error(`[gentle-cowork] blackboard unreadable (${filePath}), starting empty: ${errorMessage(error)}`);
-    return { contracts: [], nodes: [], lastFence: 0 };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {} };
   }
 
   let parsed: unknown;
@@ -193,7 +237,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
     parsed = JSON.parse(raw);
   } catch (error) {
     console.error(`[gentle-cowork] blackboard corrupt (${filePath}), starting empty: ${errorMessage(error)}`);
-    return { contracts: [], nodes: [], lastFence: 0 };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {} };
   }
 
   if (!isBlackboardState(parsed)) {
@@ -201,7 +245,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
       `[gentle-cowork] blackboard has an unrecognized shape (version ${STATE_VERSION} expected) ` +
         `at ${filePath}, starting empty`,
     );
-    return { contracts: [], nodes: [], lastFence: 0 };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {} };
   }
 
   const contracts = parsed.contracts.filter(isTaskContract).map(normalizeContract);
@@ -232,6 +276,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
         ["alive", "stale"].includes((n as unknown as Record<string, unknown>).status as string)
       ),
       lastFence,
+      usage: parseUsage(parsed.usage, filePath),
     };
 }
 
@@ -303,15 +348,28 @@ export interface Blackboard {
   mergeContracts(incoming: TaskContract[]): number;
   /** Refresh from disk (for multi-process coordination) */
   refresh(): void;
+  /** Phase 6.3: records one usage sample against a contract (persists immediately). */
+  recordUsage(entry: { contractId: string; nodeId: string; sample: UsageSample }): void;
+  /** Phase 6.3: the usage aggregate for one contract, or undefined. */
+  usageByContract(id: string): ContractUsage | undefined;
+  /** Phase 6.3: usage totals across every contract; any unknown tokens make the total unknown. */
+  usageTotals(): {
+    contracts: number;
+    modelCalls: number;
+    tokens: number | null;
+    wallTimeMs: number;
+    events: number;
+  };
 }
 
 /** Opens the blackboard state file, failing safe on any read problem. */
 export function openBlackboard(filePath: string): Blackboard {
-  const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence } = loadContracts(filePath);
+  const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage } = loadContracts(filePath);
   const contracts = new Map(loadedContracts.map((contract) => [contract.id, contract] as const));
   let lease: LeaseInfo | undefined = loadedLease;
   let fenceCounter = lastFence;
   const nodes = new Map(loadedNodes.map((node) => [node.nodeId, node] as const));
+  const usage = new Map(Object.entries(loadedUsage));
 
   /**
    * Merges the on-disk state into the in-memory maps under the write lock,
@@ -349,6 +407,11 @@ export function openBlackboard(filePath: string): Blackboard {
     }
     if (disk.lease && (!lease || disk.lease.fence > lease.fence)) lease = disk.lease;
     if (disk.lastFence > fenceCounter) fenceCounter = disk.lastFence;
+    // Usage aggregates are monotonic: the side with more recorded events is newer.
+    for (const [contractId, diskUsage] of Object.entries(disk.usage)) {
+      const local = usage.get(contractId);
+      if (!local || diskUsage.events > local.events) usage.set(contractId, diskUsage);
+    }
   };
 
   /** Acquire exclusive write lock, merge disk state, run fn, rescue concurrent writes, persist. */
@@ -374,6 +437,7 @@ export function openBlackboard(filePath: string): Blackboard {
         lease,
         nodes: [...nodes.values()],
         lastFence: fenceCounter,
+        usage: Object.fromEntries(usage),
       };
       mkdirSync(dirname(filePath), { recursive: true });
       const tmpPath = `${filePath}.tmp`;
@@ -622,7 +686,7 @@ export function openBlackboard(filePath: string): Blackboard {
       });
     },
     refresh: () => {
-      const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence } = loadContracts(filePath);
+      const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage } = loadContracts(filePath);
       contracts.clear();
       for (const contract of loadedContracts) {
         contracts.set(contract.id, contract);
@@ -633,6 +697,37 @@ export function openBlackboard(filePath: string): Blackboard {
       for (const node of loadedNodes) {
         nodes.set(node.nodeId, node);
       }
+      usage.clear();
+      for (const [contractId, contractUsage] of Object.entries(loadedUsage)) {
+        usage.set(contractId, contractUsage);
+      }
+    },
+    recordUsage: ({ contractId, nodeId, sample }) => {
+      withWriteLock(() => {
+        // The aggregation rules live in one place (metering.ts): rebuild this
+        // contract's entry through the pure accumulator and persist the result.
+        const current = usage.get(contractId) ?? { modelCalls: 0, tokens: 0, wallTimeMs: 0, events: 0, byNode: {} };
+        const next = recordUsageSample(
+          { contracts: { [contractId]: current } },
+          { contractId, nodeId, sample },
+        );
+        usage.set(contractId, next.contracts[contractId] as ContractUsage);
+      });
+    },
+    usageByContract: (id) => {
+      const found = usage.get(id);
+      if (!found) return undefined;
+      return { ...found, byNode: Object.fromEntries(Object.entries(found.byNode).map(([nodeId, nodeUsage]) => [nodeId, { ...nodeUsage }])) };
+    },
+    usageTotals: () => {
+      const totals = { contracts: usage.size, modelCalls: 0, tokens: 0 as number | null, wallTimeMs: 0, events: 0 };
+      for (const contractUsage of usage.values()) {
+        totals.modelCalls += contractUsage.modelCalls;
+        totals.wallTimeMs += contractUsage.wallTimeMs;
+        totals.events += contractUsage.events;
+        totals.tokens = totals.tokens === null || contractUsage.tokens === null ? null : totals.tokens + contractUsage.tokens;
+      }
+      return totals;
     },
   };
 }

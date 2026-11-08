@@ -17,6 +17,8 @@ import type {
   MasterVerifierResult,
   OrchestrationReport,
 } from "./types.ts";
+import type { Budget } from "../contract/schema.ts";
+import { evaluateGuards, type GuardConfig, type GuardsEvaluation } from "../contract/guards.ts";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,6 +38,7 @@ export class MasterOrchestrator {
   private readonly totalTimeoutMs: number;
   private readonly verify: (contract: TaskContract, verdict: NonNullable<OrchestrationReport["contracts"][number]["verdict"]>) => MasterVerifierResult;
   private readonly delegatedIds: string[] = [];
+  private readonly guardConfig: GuardConfig;
   private nextId = 1;
 
   constructor(options: MasterOptions) {
@@ -44,6 +47,13 @@ export class MasterOrchestrator {
     this.pollIntervalMs = options.pollIntervalMs ?? 250;
     this.totalTimeoutMs = options.totalTimeoutMs ?? 30_000;
     this.verify = options.verify ?? defaultVerifier;
+    this.guardConfig = {
+      warningThreshold: 0.8,
+      pauseThreshold: 1.0,
+      onExceeded: "pause+escalate",
+      onWarning: "escalate",
+      ...options.guardConfig,
+    };
   }
 
   /** Registers this master on the blackboard (planner + verifier capabilities). */
@@ -80,6 +90,7 @@ export class MasterOrchestrator {
           version: 1,
           history: [{ status: "pending", version: 1, nodeId: this.nodeId, timestamp: now }],
           retryCount: 0,
+          budget: seed.budget,
         };
         this.board.putContract(contract, lease.fence);
         this.delegatedIds.push(contract.id);
@@ -106,9 +117,20 @@ export class MasterOrchestrator {
       .sort((a, b) => Date.parse(b.lastHeartbeat) - Date.parse(a.lastHeartbeat));
     if (workers.length === 0) return 0;
 
-    const pending = this.board.listContracts().filter((c) => c.role === "implementer" && c.status === "pending");
+    const pending = this.board
+      .listContracts()
+      .filter((c) => c.role === "implementer" && c.status === "pending");
     let assigned = 0;
     for (const contract of pending) {
+      const guardEval = this.evaluateGuards(contract);
+      if (guardEval.shouldPause) {
+        // Contract is paused due to budget exceeded - record the pause in history
+        this.recordPauseGate(contract, guardEval.exceededDimensions);
+        continue;
+      }
+      if (guardEval.shouldEscalate) {
+        this.recordEscalation(contract, guardEval.warningDimensions);
+      }
       const worker = this.pickWorker(workers);
       if (!worker) break;
       try {
@@ -121,6 +143,70 @@ export class MasterOrchestrator {
       }
     }
     return assigned;
+  }
+
+  /** Result of evaluating budget guards for one contract. */
+  private evaluateGuards(contract: TaskContract): {
+    shouldPause: boolean;
+    shouldEscalate: boolean;
+    exceededDimensions: string[];
+    warningDimensions: string[];
+  } {
+    // Check if contract has a budget to evaluate
+    const budget = (contract as TaskContract & { budget?: Budget }).budget;
+    if (!budget) {
+      return { shouldPause: false, shouldEscalate: false, exceededDimensions: [], warningDimensions: [] };
+    }
+    const usage = this.board.usageByContract(contract.id);
+    if (!usage) {
+      // No usage recorded yet - cannot evaluate
+      return { shouldPause: false, shouldEscalate: false, exceededDimensions: [], warningDimensions: [] };
+    }
+    // Build a Budget object from usage
+    const currentBudget: Budget = {
+      modelCalls: { limit: budget.modelCalls.limit, measured: usage.modelCalls },
+      tokens: { limit: budget.tokens.limit, measured: usage.tokens ?? null },
+      wallTime: { limit: budget.wallTime.limit, measured: usage.wallTimeMs },
+    };
+    const evalResult = evaluateGuards(currentBudget, this.guardConfig);
+    const exceeded: string[] = [];
+    const warning: string[] = [];
+    for (const [dim, result] of Object.entries(evalResult)) {
+      if (result.state === "exceeded") exceeded.push(dim);
+      else if (result.state === "warning") warning.push(dim);
+    }
+    return {
+      shouldPause: exceeded.length > 0,
+      shouldEscalate: warning.length > 0 || exceeded.length > 0,
+      exceededDimensions: exceeded,
+      warningDimensions: warning,
+    };
+  }
+
+  /** Records a budget pause gate in the contract's history. */
+  private recordPauseGate(contract: TaskContract, exceededDimensions: string[]): void {
+    const lease = this.board.acquireLease(this.nodeId);
+    if (!lease) return;
+    try {
+      this.board.updateStatus(
+        contract.id,
+        "paused",
+        this.nodeId,
+        [],
+        lease.fence,
+        [
+          `BUDGET_PAUSED: exceeded ${exceededDimensions.join(", ")} (pause+escalate)`,
+        ],
+      );
+    } finally {
+      this.board.releaseLease(this.nodeId, lease.fence);
+    }
+  }
+
+  /** Records a budget warning escalation in the contract's history. */
+  private recordEscalation(contract: TaskContract, warningDimensions: string[]): void {
+    // Just log to console for now; could also add a lightweight history entry
+    console.log(`[gentle-cowork] BUDGET_WARNING: contract ${contract.id} approaching limits on ${warningDimensions.join(", ")} (escalate)`);
   }
 
   /** Least-loaded worker by in_progress count; ties break on the input order (freshest heartbeat first). */

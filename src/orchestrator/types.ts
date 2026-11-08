@@ -10,6 +10,8 @@
 
 import type { Blackboard } from "../blackboard.ts";
 import type { CoworkRole, TaskContract, TaskStatus } from "../types.ts";
+import type { Budget } from "../contract/schema.ts";
+import type { GuardConfig } from "../contract/guards.ts";
 
 /** The verdict a worker writes to the blackboard after executing one contract. */
 export interface WorkerStepVerdict {
@@ -66,6 +68,8 @@ export interface ContractSeed {
   acceptanceCriteria: string[];
   specRef: string;
   role?: CoworkRole;
+  /** Budget for this contract (Phase 6.4). */
+  budget?: Budget;
 }
 
 /** Options for the MasterOrchestrator. */
@@ -80,6 +84,8 @@ export interface MasterOptions {
   totalTimeoutMs?: number;
   /** Verifier for worker verdicts; defaults to the structural defaultVerifier. */
   verify?: MasterVerifier;
+  /** Guard configuration for budget enforcement (Phase 6.4). */
+  guardConfig?: Partial<GuardConfig>;
 }
 
 /** Options for the LocalWorker. */

@@ -88,3 +88,19 @@ datos reales antes de que las guardas bloqueen.
   frontera RPC no expone usage hoy). 2 tests GREEN.
   Suite completa: **287 passed | 3 todo (290)**, `pnpm run typecheck` exit 0.
   Commit: `feat(metering): Phase 6.3 core + blackboard persistence + metered executor` (SHA pendiente).
+
+- **L4** T4–T5 (guardas + enforcement) aterrizados en feat/p6-oracle.
+  T4 (S4,S5,S8): `src/contract/guards.ts` + `guards.test.ts` — evaluateGuards devuelve
+  por dimensión `{ state: ok|warning|exceeded|unknown, ratio, action }`. Umbral
+  warning 80% provisional (configurable), pause en 100%. Acción default pausa+escalate;
+  degrade suave por contrato (onExceeded=degrade). 13/13 tests GREEN.
+  T5 (S4,S5): `src/orchestrator/master.ts` — MasterOrchestrator ahora recibe
+  guardConfig (warning 80%, pause 100%, onExceeded default pausa+escalate).
+  assignPending evalúa guardas antes de despachar:
+  - exceeded → pausa (no despacha) + registra gate BUDGET_PAUSED en history
+  - warning → escalate (log visible en consola)
+  TaskStatus extendido con `paused`; ContractSeed y TaskContract llevan `budget?: Budget`
+  (opcional, rellenado desde ContractSeed.budget que a su vez se toma del
+  ProjectContract vía specRef). GuardConfig expuesta en MasterOptions.
+  Suite: **300 passed | 3 todo (303)**, `typecheck` exit 0.
+  Commit: `feat(guards): Phase 6.4 guards evaluation + master enforcement` (SHA pendiente).

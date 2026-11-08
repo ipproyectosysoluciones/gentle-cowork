@@ -8,7 +8,9 @@
 
 export type CoworkRole = "planner" | "implementer" | "verifier";
 
-export type TaskStatus = "pending" | "in_progress" | "completed" | "failed";
+import type { Budget } from "./contract/schema.ts";
+
+export type TaskStatus = "pending" | "in_progress" | "completed" | "failed" | "paused";
 
 /** Audit trail entry for a contract status transition. */
 export interface ContractHistoryEntry {
@@ -59,6 +61,9 @@ export interface TaskContract {
 
   /** Retry count for orphan recovery re-queues (max 3). */
   retryCount?: number;
+
+  /** Budget limits for this contract (Phase 6.4). */
+  budget?: Budget;
 }
 
 /** Node registration for multi-node coordination. */

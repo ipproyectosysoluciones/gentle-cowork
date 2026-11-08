@@ -672,7 +672,7 @@ export function openBlackboard(filePath: string): Blackboard {
             merged++;
           } else if (inc.version === existing.version) {
             // Same version - use status priority
-            const statusPriority = { completed: 4, failed: 3, in_progress: 2, pending: 1 };
+            const statusPriority = { completed: 4, failed: 3, in_progress: 2, paused: 2, pending: 1 };
             const incPriority = statusPriority[inc.status] ?? 0;
             const existPriority = statusPriority[existing.status] ?? 0;
             if (incPriority > existPriority) {

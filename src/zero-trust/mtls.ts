@@ -62,7 +62,7 @@ export function createMTLSServerWithCallback(options: {
 		key: options.key,
 		ca: options.ca,
 		requestCert: true,
-		rejectUnauthorized: false, // We'll do custom verification
+		rejectUnauthorized: true,
 	};
 
 	const server = createServer(serverOptions);
@@ -76,7 +76,6 @@ export function createMTLSServerWithCallback(options: {
 		}
 
 		// Convert to forge certificate for custom verification
-			// Convert to forge certificate for custom verification
 			const der = clientCert.raw;
 			const b64 = Buffer.from(der).toString("base64");
 			const chunks = b64.match(/.{1,64}/g) ?? [];

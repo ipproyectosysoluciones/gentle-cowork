@@ -12,9 +12,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { openBlackboard } from "../blackboard.ts";
+import type { Budget } from "../contract/schema.ts";
 import type { NodeRegistration, TaskContract } from "../types.ts";
 import { MasterOrchestrator } from "./master.ts";
 import { extractWorkerVerdict } from "./verdict.ts";
@@ -52,6 +53,7 @@ interface ContractSeedStub {
   acceptanceCriteria: string[];
   specRef: string;
   role?: "planner" | "implementer" | "verifier";
+  budget?: Budget;
 }
 
 /** Builds a terminal contract carrying a worker verdict in its history (as the worker would write it). */
@@ -197,6 +199,64 @@ describe("orchestrator — MasterOrchestrator (T5.8)", () => {
 
       expect(assigned).toBe(0);
       expect(board.getContract(contract.id)!.status).toBe("pending");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("logs visibly when the pause gate cannot record because the write lease is contested (#127)", () => {
+    const tmp = makeTmpDir();
+    try {
+      const board = openBlackboard(join(tmp, ".gentle-cowork", "blackboard.json"));
+      // Contested write lease: the first acquireLease (delegate seeding) is
+      // granted; every later one (the pause gate write) is denied, as when
+      // another node holds the write lock for the whole round.
+      let leaseCalls = 0;
+      const boardNoLease = {
+        ...board,
+        acquireLease: (nodeId: string, ttlMs?: number) => {
+          leaseCalls += 1;
+          if (leaseCalls === 1) return board.acquireLease(nodeId, ttlMs);
+          return null;
+        },
+      };
+      const master = new MasterOrchestrator({ board: boardNoLease, nodeId: "master-1" });
+      master.register();
+      const [contract] = master.delegate([
+        makeSeed({
+          role: "implementer",
+          budget: {
+            modelCalls: { limit: 1, measured: null },
+            tokens: { limit: null, measured: null },
+            wallTime: { limit: null, measured: null },
+          },
+        }),
+      ]);
+      board.registerNode(makeNode("worker-1", "worker", ["implementer"]));
+
+      // Usage exceeds the modelCalls limit -> evaluateGuards should pause.
+      board.recordUsage({
+        contractId: contract.id,
+        nodeId: "worker-1",
+        sample: { modelCalls: 5, tokens: null, wallTimeMs: 10 },
+      });
+
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const assigned = master.assignPending();
+
+        // Paused contracts are not dispatched.
+        expect(assigned).toBe(0);
+        expect(board.getContract(contract.id)!.status).toBe("pending");
+
+        // The pause decision must be observable even though the gate could
+        // not be recorded: a visible log naming the contract and dimension.
+        const logged = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+        expect(logged).toContain("BUDGET_PAUSED");
+        expect(logged).toContain(contract.id);
+      } finally {
+        errSpy.mockRestore();
+      }
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

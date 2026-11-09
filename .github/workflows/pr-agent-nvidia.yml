@@ -23,10 +23,9 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          # The repo uses pnpm 11 (pnpm-workspace.yaml carries overrides but no
-          # `packages` field). pnpm 9 fails `pnpm store path` with
-          # "packages field missing or empty", which breaks setup-node's cache.
-          version: 11
+          # pnpm 11 requires Node >= 22.13, but this workflow runs on Node 20.
+          # pnpm 10 supports the `packages` field and works on Node 20.
+          version: 10
           run_install: false
 
       - name: Setup Node.js

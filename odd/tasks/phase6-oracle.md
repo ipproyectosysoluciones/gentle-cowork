@@ -51,7 +51,10 @@ datos reales antes de que las guardas bloqueen.
 - **T6** [S6] Evidencia de dogfood: una corrida `pnpm run dogfood:run` con usage capturado en
   el blackboard, pegada en el Log.
 - **T7** [S7] Auditoría de cobertura de entradas del gate + revisión nativa de la unidad
-  6.4 (riesgo alto) antes de la entrega; suite + typecheck verdes.
+  6.4 (riesgo alto) antes de la entrega; suite + typecheck verdes. ✅ Dos lineages
+  nativos con lentes completadas; refuters completados con provider NVIDIA
+  (2026-11-09, L8); ambos cerraron `escalated` (hallazgos severos inconclusos,
+  informativo para el maintainer).
 
 ## Log
 
@@ -151,3 +154,32 @@ datos reales antes de que las guardas bloqueen.
     externa adicional; el risk-gated path exige verificador independiente (ya
     completado por el assess escalado) y la revisión no autoriza delivery — la
     política del repo decide.
+
+- **L8 (2026-11-09, refuters completados con provider NVIDIA — ambos lineages
+  terminan `escalated`):** el dueño pidió reintentar el refuter con un provider
+  alternativo (modelos NVIDIA) tras agotarse la cuota de DeepSeek V4-Flash. Las
+  dos corridas usaron `nvidia/nemotron-3-ultra-550b-a55b` vía pi_host_relay,
+  costo USD 0, sin sonda dinámica (`probe unavailable on pi` — corroboración por
+  lectura de código).
+  **2ª revisión (`review-2b25a47f82b680a9`, target `sha256:d5120e56…`):** el
+  refuter corroboró 5 hallazgos — R3-2 (`master.ts:165-180` + `:106-115`, lease),
+  R3-3 y R4-1 (`executor.ts:115-135`), R4-4 (`master.ts:165-195` +
+  `guards.ts:55-75`), R4-5 (`master.ts:165-185`) — y dejó 3 con causalidad
+  desconocida (R3-1, R4-2, R4-3): cierre `escalated`, store
+  `sha256:c52da6b9…`.
+  **1ª revisión (`review-e91f43efc5f8542d`, target `sha256:fc68a7f7…`):** el
+  refuter corroboró 1 — R4-recordPauseGate-silent-lease-failure
+  (`master.ts:117-142` + `:192-210`) — y dejó 6 con causalidad desconocida
+  (R1-001, R3-1, R3-2, R4-blackboard-fail-open-corruption,
+  R4-metered-executor-error-swallow, R4-usage-merge-loses-concurrent-node-updates):
+  cierre `escalated`, store `sha256:004dd9ea…`.
+  **Lectura:** `escalated` es terminal-informativo — la revisión no autoriza
+  entrega pero tampoco la prohíbe; la política del repo decide (ya decidida en
+  L6/L7: feature entregado). Los hallazgos corroborados son trabajo advisory
+  real para 6.5+: el patrón dominante es el fail-open del lease/gate en
+  `master.ts` (recordPauseGate silencia fallos de lease; evaluateGuards relee
+  usage bajo carrera) y el error-swallow del `meteredStepExecutor`
+  (`executor.ts:115-135`). Se priorizarán con los issues H4/H6 (#92, #94) que
+  describen la misma superficie. Presupuesto de corrección 200 intacto en ambos
+  lineages — no se pidió corrección: los hallazgos no son defectos
+  deterministas del candidato, son riesgos de diseño ya registrados.

@@ -1,0 +1,37 @@
+name: PR Agent (NVIDIA Nemotron)
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+
+jobs:
+  pr_agent_job:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+    steps:
+      - name: PR Agent with NVIDIA Nemotron
+        uses: the-pr-agent/pr-agent@main
+        id: pragent
+        env:
+          # NVIDIA NIM API (OpenAI-compatible)
+          OPENAI_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          OPENAI_BASE_URL: "https://integrate.api.nvidia.com/v1"
+          OPENAI_MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
+          
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+          # PR-Agent configuration
+          PR_AGENT_COMMANDS: "review,describe"
+          PR_AGENT_PR_REVIEWER_REVIEW_EFFORT: "medium"
+          PR_AGENT_PR_REVIEWER_FOCUS_ON_SECURITY: "true"
+          PR_AGENT_PR_REVIEWER_FOCUS_ON_PERFORMANCE: "true"
+          PR_AGENT_PR_REVIEWER_REQUIRE_TESTS: "true"
+          
+          # Config from .toml
+          CONFIG_PATH: ".github/pr-agent.toml"

@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { openBlackboard, defaultBlackboardPath } from "../blackboard.ts";
+import { openBlackboard, defaultBlackboardPath, type Blackboard } from "../blackboard.ts";
 import type { StepExecutor, WorkerStepVerdict } from "./types.ts";
 import type { TaskContract } from "../types.ts";
 import { meteredStepExecutor } from "./executor.ts";
@@ -68,6 +68,26 @@ describe("meteredStepExecutor (6.3)", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("preserves the worker's original error when the metering write fails (#128)", async () => {
+    const failingExecutor: StepExecutor = {
+      async execute(contract) {
+        throw new Error("worker step blew up");
+      },
+    };
+
+    const failingBoard = {
+      recordUsage: () => {
+        throw new Error("blackboard write failed");
+      },
+    } as unknown as Blackboard;
+
+    const metered = meteredStepExecutor(failingExecutor, failingBoard, "worker-x");
+    const contract = makeContract({ id: "t-err" });
+
+    // The observed error must be the worker's, not the metering write's.
+    await expect(metered.execute(contract)).rejects.toThrow("worker step blew up");
   });
 
   it("aggregates across multiple contracts and nodes", async () => {

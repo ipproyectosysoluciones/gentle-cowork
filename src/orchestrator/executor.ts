@@ -123,12 +123,27 @@ export function meteredStepExecutor(
       try {
         return await inner.execute(contract);
       } finally {
-        const sample: UsageSample = {
-          modelCalls: 1,
-          tokens: null,
-          wallTimeMs: Date.now() - started,
-        };
-        board.recordUsage({ contractId: contract.id, nodeId, sample });
+        // Metering must never mask the worker's own failure (#128): usage is
+        // recorded best-effort for both success and failure, and a blackboard
+        // I/O error here is logged - never rethrown from finally, where it
+        // would replace the worker's original exception.
+        try {
+          board.recordUsage({
+            contractId: contract.id,
+            nodeId,
+            sample: {
+              modelCalls: 1,
+              tokens: null,
+              wallTimeMs: Date.now() - started,
+            },
+          });
+        } catch (meteringErr) {
+          console.error(
+            `[gentle-cowork] meteredStepExecutor: usage write failed for ${contract.id} on ${nodeId}: ${
+              meteringErr instanceof Error ? meteringErr.message : String(meteringErr)
+            }`,
+          );
+        }
       }
     },
   };

@@ -56,6 +56,11 @@ export class MasterOrchestrator {
     };
   }
 
+  /** Internal logger for consistent output. */
+  private log(msg: string): void {
+    console.error(`[gentle-cowork] ${msg}`);
+  }
+
   /** Registers this master on the blackboard (planner + verifier capabilities). */
   register(): void {
     const now = new Date().toISOString();
@@ -193,8 +198,8 @@ export class MasterOrchestrator {
       // #127: fail loud, not open. The pause decision must be observable even
       // when the write lease is contested; the next assignPending round
       // re-evaluates and retries the gate recording.
-      console.error(
-        `[gentle-cowork] BUDGET_PAUSED (unrecorded): contract ${contract.id} exceeded ${exceededDimensions.join(
+      this.log(
+        `BUDGET_PAUSED (unrecorded): contract ${contract.id} exceeded ${exceededDimensions.join(
           ", ",
         )} - write lease contested, will retry next round`,
       );
@@ -218,8 +223,8 @@ export class MasterOrchestrator {
 
   /** Records a budget warning escalation in the contract's history. */
   private recordEscalation(contract: TaskContract, warningDimensions: string[]): void {
-    // Just log to console for now; could also add a lightweight history entry
-    console.log(`[gentle-cowork] BUDGET_WARNING: contract ${contract.id} approaching limits on ${warningDimensions.join(", ")} (escalate)`);
+    // Just log for now; could also add a lightweight history entry
+    this.log(`BUDGET_WARNING: contract ${contract.id} approaching limits on ${warningDimensions.join(", ")} (escalate)`);
   }
 
   /** Least-loaded worker by in_progress count; ties break on the input order (freshest heartbeat first). */

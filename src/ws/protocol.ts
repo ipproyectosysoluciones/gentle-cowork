@@ -2,6 +2,8 @@
  * WS Protocol for Phase 5 Stage 3 — Master/Worker coordination.
  * Reuses framing pattern from dot-telegram daemon protocol.
  */
+import { randomBytes } from "node:crypto";
+
 export const WS_PROTOCOL_VERSION = 1;
 export const WS_PORT = 4318;
 export const WS_BIND = "127.0.0.1";
@@ -52,7 +54,6 @@ export function validateWSPort(port: string | undefined): number {
 
 /** Generates a cryptographically secure fence token (H3). */
 export function generateFence(): number {
-	const { randomBytes } = require("node:crypto");
 	const bytes = randomBytes(8); // 64 bits
 	let fence = 0;
 	for (let i = 0; i < 8; i++) {
@@ -74,7 +75,6 @@ export function generateFence(): number {
 
 /** Generates a cryptographically secure nonce (H5). */
 export function generateNonce(): string {
-	const { randomBytes } = require("node:crypto");
 	return randomBytes(16).toString("base64");
 }
 

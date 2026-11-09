@@ -48,10 +48,11 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
 
 ### Tasks
 
-- [ ] **PI-T1** [PI-1] Migrar `scripts/dogfood-master.ts` y `scripts/dogfood-worker.ts` a background jobs nativos de gentle-pi
-  - Eliminar runners custom (`scripts/run-dogfood.sh`, `scripts/launch-remote-worker.ts`)
-  - Usar `gentle-pi` background jobs API
+- [x] **PI-T1** [PI-1] Migrar `scripts/dogfood-master.ts` y `scripts/dogfood-worker.ts` a background jobs nativos de gentle-pi
+  - Eliminar runners custom (`scripts/run-dogfood.sh` eliminado; `scripts/launch-remote-worker.ts` se mantiene — es la CLI de provisión remota SSH/Docker de Phase 5, no un dogfood runner; su migración operativa a `bash_background` es trabajo separado)
+  - Usar `gentle-pi` background jobs API: `/cowork-dogfood <run|master|worker>` muestra la invocación RPC exacta de `bash_background` (la salida del job es la notificación); `scripts/dogfood-native.ts` orquesta `run` (master+worker) en un solo comando
   - Verificar: suite 304 tests pasa, dogfood end-to-end funcional
+  - ✅ Evidencia: suite `304 passed | 3 todo (307)`, typecheck clean, dogfood e2e EXIT 0 (4/4 contratos gc-1..gc-4 completados, master+worker coordinando vía blackboard, ~12s)
 
 - [ ] **PI-T2** [PI-2] Command guards nativos para comandos `/cowork-*`
   - Registrar comandos con native command guards
@@ -84,3 +85,6 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
 
 - L-P1 (2026-11-09, decisión del dueño): "Sí, vale la pena continuar con gentle-cowork — pero evolucionando la arquitectura: dejar de construir infra, usar nativo. Doblar apuesta en dominio (blackboard, budgets, ODD, metering)."
 - L-P2 (2026-11-09): Fase 1 completada — gentle-ai 4.4.0 synced, gentle-pi 4.7.0 instalado, tests 304 passing, typecheck clean.
+- L-P3 (2026-11-09, PI-T1 aterriza): `scripts/run-dogfood.sh` eliminado; `pnpm run dogfood:run` ahora ejecuta `tsx scripts/dogfood-native.ts run --timeout 180`. `/cowork-dogfood` (extensión) registra el comando que emite la invocación nativa `bash_background` de gentle-pi 4.7.0 para master/worker/run — la salida del job es la notificación, sin polling del runner custom.
+  **Bug real encontrado por el dogfood e2e:** `generateFence()`/`generateNonce()` (`src/ws/protocol.ts`) usaban `require("node:crypto")` inline (introducido por el fix CodeQL del bias en `6efbcf0`), lo que revienta en ESM (`require is not defined`) — vitest lo tolera en su transform, tsx no. Fix: import estático de `randomBytes`. El dogfood volvió a correr: EXIT 0, 4/4 contratos completados, coordinación master/worker vía blackboard OK. Lección: los scripts dogfood en tsx son el canario ESM que la suite vitest no cubre.
+  **Alcance:** `launch-remote-worker.ts` NO se elimina — es la CLI de provisión remota (SSH/Docker + túnel) de Phase 5 con tests propios, no un runner de dogfood. Migrar su spawn detached + PID file a `bash_background` nativo requiere un VPS real para verificar; queda como trabajo operativo separado, documentado aquí para que el dueño decida.

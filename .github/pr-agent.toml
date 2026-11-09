@@ -1,0 +1,95 @@
+# PR-Agent Configuration for gentle-cowork
+# Based on the system prompt structure shared for bugbot-like reviews
+
+[general]
+# Model configuration
+model = "gpt-4o"  # or "claude-3-5-sonnet-20241022" if using Anthropic
+temperature = 0.1
+max_tokens = 8192
+
+# Language for output (English: PR/issue artifacts are English by repo rule)
+language = "english"
+
+[pr_reviewer]
+# Review effort: minimal | medium | extensive
+review_effort = "medium"
+
+# Focus areas (matching the bugbot structure)
+focus_on_security = true
+focus_on_performance = true
+focus_on_tests = true
+focus_on_documentation = true
+
+# Require tests for new code
+require_tests = true
+
+# Auto-approve threshold (none = never auto-approve)
+auto_approve = "none"
+
+# Custom instructions for the reviewer (similar to bugbot's system prompt)
+extra_instructions = """
+## Seguridad / Modelo de confianza
+- Entradas NO confiables: código del PR, comentarios del usuario, variables de entorno no validadas
+- Excepción - Fuentes confiables: archivos de configuración del repo (.toml, .json), tests existentes, docs oficiales
+
+## Herramientas disponibles
+- Análisis estático: úsalo para detectar patrones inseguros
+- Tests existentes: ejecútalos para validar comportamiento
+- TypeScript compiler: valida tipos antes de sugerir cambios
+
+## Formato de salida
+- Estructura: Resumen ejecutivo → Hallazgos por severidad → Sugerencias de código → Veredicto
+- Longitud: Máximo 500 líneas total
+- Resultados permitidos: APPROVE | REQUEST_CHANGES | COMMENT
+
+## Re-evaluación (estado previo)
+- Si ya revisaste este PR y no hay cambios nuevos → no repetir hallazgos
+- Si hay commits nuevos → revisar solo el delta
+- Si otro reviewer (humano) ya aprobó → no revertir sin causa justificada
+
+## Políticas configurables
+- Prioridad: security > performance > readability > style
+- Conflictos: gana la política más estricta (security)
+
+## Objetivo
+1. Detectar vulnerabilidades de seguridad (injection, auth bypass, path traversal)
+2. Verificar que tests cubran nuevos caminos de código
+3. Validar tipos TypeScript y patrones del proyecto
+4. Sugerir mejoras concretas con diffs aplicables
+
+## Espera de señales
+- Consultar: diff del PR, tests relacionados, config de CI
+- Timeout: 5 minutos máximo por review
+- Terminado: review completa + veredicto emitido
+
+## Criterios de decisión
+- Sin hallazgos críticos/altos + tests pasan → APPROVE
+- Hallazgos medios/bajos → COMMENT con sugerencias
+- Hallazgos críticos/altos o tests fallan → REQUEST_CHANGES
+
+## Escalamiento
+- Derivar a humano: hallazgos críticos de seguridad, decisiones de arquitectura, breaking changes
+- A: @lordastaroth (owner/reviewer of record)
+- Cómo: @mention en comment + label "needs-human-review"
+
+## Reporte final
+- Notificar en: PR conversation + GitHub review
+- Afirmar solo lo que herramientas confirmen (tests, typecheck, static analysis)
+- Incluir: resumen, hallazgos por archivo, sugerencias de código, veredicto
+"""
+
+[pr_description]
+# Auto-generate PR description
+enable = true
+generate_labels = true
+generate_summary = true
+
+[pr_code_suggestions]
+# Code improvement suggestions
+enable = true
+max_suggestions = 10
+commitable_suggestions = true
+
+[pr_questions]
+# Allow /ask command
+enable = true

@@ -109,5 +109,10 @@ jobs:
           # recognized variable - [config] model is the real setting.
           CONFIG__MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
           CONFIG__FALLBACK_MODELS: "nvidia/nemotron-3-super-120b-a12b"
+          # Custom models are absent from PR-Agent's built-in limits and
+          # LiteLLM metadata: without a resolved input-token limit the token
+          # budget fails closed ("Unable to resolve a positive input-token
+          # limit", PR #136 run). 128000 = standard NVIDIA NIM LLM context.
+          CONFIG__CUSTOM_MODEL_MAX_TOKENS: "128000"
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

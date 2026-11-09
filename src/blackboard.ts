@@ -42,6 +42,8 @@ import {
 	recordUsageSample,
 	type UsageSample,
 } from "./metering.ts";
+import { evaluateGuards, type GuardConfig, type GuardsEvaluation } from "./contract/guards.ts";
+import { type Budget } from "./contract/schema.ts";
 import { generateFence } from "./ws/protocol.ts";
 
 /** Directory (inside the project cwd) holding the blackboard state file. */
@@ -385,6 +387,20 @@ export interface Blackboard {
     wallTimeMs: number;
     events: number;
   };
+  /**
+   * Phase 6.4: atomically evaluates budget guards and assigns a contract.
+   * Evaluates guards and performs the assignment under a single write lock,
+   * eliminating the TOCTOU window between evaluateGuards and assignContract.
+   * Returns { paused: true, reason } if guards pause, or { paused: false }
+   * on successful assignment (or if no budget/guards to evaluate).
+   */
+  evaluateGuardsAndAssign(
+    contractId: string,
+    workerNodeId: string,
+    guardConfig: GuardConfig,
+    budget: Budget,
+    presentedFence: number,
+  ): { paused: boolean; reason?: string };
 }
 
 /** Opens the blackboard state file, failing safe on any read problem. */
@@ -771,6 +787,101 @@ export function openBlackboard(filePath: string): Blackboard {
         totals.tokens = totals.tokens === null || contractUsage.tokens === null ? null : totals.tokens + contractUsage.tokens;
       }
       return totals;
+    },
+    evaluateGuardsAndAssign: (
+      contractId: string,
+      workerNodeId: string,
+      guardConfig: GuardConfig,
+      budget: Budget,
+      presentedFence: number,
+    ): { paused: boolean; reason?: string } => {
+      return withWriteLock(() => {
+        // 1. Read current usage for this contract from the local Map
+        const currentUsage = usage.get(contractId);
+        if (!currentUsage) {
+          // No usage recorded yet - cannot evaluate, proceed with assignment
+          // Inline assignment logic (same as below)
+          const existing = contracts.get(contractId);
+          if (!existing || existing.status !== "pending") {
+            return { paused: false, reason: "not_assigned" };
+          }
+          if (lease && typeof presentedFence === "number") {
+            if (presentedFence !== lease.fence) {
+              return { paused: false, reason: "fence_mismatch" };
+            }
+          }
+          const now = new Date().toISOString();
+          const nextVersion = existing.version + 1;
+          const historyEntry: ContractHistoryEntry = {
+            status: "in_progress",
+            version: nextVersion,
+            nodeId: workerNodeId,
+            timestamp: now,
+            leaseFence: lease?.fence,
+          };
+          const updated: TaskContract = {
+            ...existing,
+            status: "in_progress",
+            workerNodeId,
+            version: nextVersion,
+            history: [...existing.history, historyEntry],
+            leaseFence: lease?.fence,
+          };
+          contracts.set(contractId, updated);
+          return { paused: false };
+        }
+
+        // 2. Build the current budget from usage
+        const currentBudget: Budget = {
+          modelCalls: { limit: budget.modelCalls.limit, measured: currentUsage.modelCalls },
+          tokens: { limit: budget.tokens.limit, measured: currentUsage.tokens ?? null },
+          wallTime: { limit: budget.wallTime.limit, measured: currentUsage.wallTimeMs },
+        };
+
+        // 3. Evaluate guards
+        const evalResult = evaluateGuards(currentBudget, guardConfig);
+        const exceeded: string[] = [];
+        for (const [dim, result] of Object.entries(evalResult)) {
+          if (result.state === "exceeded") exceeded.push(dim);
+        }
+
+        // 4. If any dimension exceeded -> pause
+        if (exceeded.length > 0) {
+          return { paused: true, reason: `budget_exceeded: ${exceeded.join(", ")}` };
+        }
+
+        // 5. No dimensions exceeded -> proceed with assignment (inlined from assignContract)
+        const existing = contracts.get(contractId);
+        if (!existing || existing.status !== "pending") {
+          return { paused: false, reason: "not_assigned" };
+        }
+        if (lease && typeof presentedFence === "number") {
+          if (presentedFence !== lease.fence) {
+            return { paused: false, reason: "fence_mismatch" };
+          }
+        }
+        const now = new Date().toISOString();
+        const nextVersion = existing.version + 1;
+        const historyEntry: ContractHistoryEntry = {
+          status: "in_progress",
+          version: nextVersion,
+          nodeId: workerNodeId,
+          timestamp: now,
+          leaseFence: lease?.fence,
+        };
+        const updated: TaskContract = {
+          ...existing,
+          status: "in_progress",
+          workerNodeId,
+          version: nextVersion,
+          history: [...existing.history, historyEntry],
+          leaseFence: lease?.fence,
+        };
+        contracts.set(contractId, updated);
+        // Note: we intentionally do NOT call copyContract here to avoid
+        // mutating the returned object; the caller gets the updated status.
+        return { paused: false };
+      });
     },
   };
 }

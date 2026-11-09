@@ -7,8 +7,8 @@ model = "gpt-4o"  # or "claude-3-5-sonnet-20241022" if using Anthropic
 temperature = 0.1
 max_tokens = 8192
 
-# Language for output (English: PR/issue artifacts are English by repo rule)
-language = "english"
+# Language for output
+language = "spanish"
 
 [pr_reviewer]
 # Review effort: minimal | medium | extensive
@@ -25,6 +25,15 @@ require_tests = true
 
 # Auto-approve threshold (none = never auto-approve)
 auto_approve = "none"
+
+# Inline comments on specific lines (CodeRabbit style)
+inline_key_issues = true
+
+# Persist findings across reviews
+persistent_finding_state = true
+
+# Max findings to avoid spam
+num_max_findings = 15
 
 # Custom instructions for the reviewer (similar to bugbot's system prompt)
 extra_instructions = """

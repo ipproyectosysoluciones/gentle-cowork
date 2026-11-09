@@ -189,7 +189,17 @@ export class MasterOrchestrator {
   /** Records a budget pause gate in the contract's history. */
   private recordPauseGate(contract: TaskContract, exceededDimensions: string[]): void {
     const lease = this.board.acquireLease(this.nodeId);
-    if (!lease) return;
+    if (!lease) {
+      // #127: fail loud, not open. The pause decision must be observable even
+      // when the write lease is contested; the next assignPending round
+      // re-evaluates and retries the gate recording.
+      console.error(
+        `[gentle-cowork] BUDGET_PAUSED (unrecorded): contract ${contract.id} exceeded ${exceededDimensions.join(
+          ", ",
+        )} - write lease contested, will retry next round`,
+      );
+      return;
+    }
     try {
       this.board.updateStatus(
         contract.id,

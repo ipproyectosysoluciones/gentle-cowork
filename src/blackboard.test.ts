@@ -1509,3 +1509,132 @@ describe("blackboard — Phase 6.3: usage metering (STATE_VERSION=3)", () => {
     }
   });
 });
+
+describe("blackboard — Phase 6.4: atomic guard evaluation + assignment (TOCTOU fix #129)", () => {
+  const makeContract = (over: Record<string, unknown> = {}): TaskContract => ({
+    id: "gc-1",
+    objective: "test objective",
+    role: "implementer" as const,
+    scope: ["src/"],
+    acceptanceCriteria: ["works"],
+    specRef: "spec.md",
+    artifacts: [],
+    status: "pending" as const,
+    version: 1,
+    history: [{ status: "pending" as const, version: 1, nodeId: "test", timestamp: new Date().toISOString() }],
+    budget: {
+      modelCalls: { limit: 10, measured: null },
+      tokens: { limit: null, measured: null },
+      wallTime: { limit: null, measured: null },
+    },
+    ...over,
+  });
+
+  const guardConfig = {
+    warningThreshold: 0.8,
+    pauseThreshold: 1.0,
+    onExceeded: "pause+escalate" as const,
+    onWarning: "escalate" as const,
+  };
+
+  it("atomically evaluates guards and assigns: pauses when usage exceeds limit, no TOCTOU window", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Seed a pending contract with budget: modelCalls limit = 10
+      const lease = board.acquireLease("master-1")!;
+      const contract = makeContract({ id: "gc-1" });
+      board.putContract(contract, lease.fence);
+      board.releaseLease("master-1", lease.fence);
+
+      // Initial usage: 5 modelCalls (under 10 limit)
+      board.recordUsage({
+        contractId: "gc-1",
+        nodeId: "worker-a",
+        sample: { modelCalls: 5, tokens: null, wallTimeMs: 100 },
+      });
+
+      // Now simulate concurrent usage that would push it over limit
+      // In the TOCTOU race, this would be written BETWEEN evaluateGuards and assignContract
+      // With the atomic evaluate-and-assign, the limit is checked under the same lock
+      board.recordUsage({
+        contractId: "gc-1",
+        nodeId: "worker-b",
+        sample: { modelCalls: 10, tokens: null, wallTimeMs: 200 },
+      });
+
+      // Verify current usage exceeds limit (15 > 10)
+      const usage = board.usageByContract("gc-1")!;
+      expect(usage.modelCalls).toBe(15);
+
+      // Acquire lease for assignment attempt
+      const assignLease = board.acquireLease("master-1")!;
+      // NOTE: do NOT acquire worker lease here; the master's lease is the one
+      // that authorizes the assignment write.
+
+      // ATOMIC evaluate-and-assign: should PAUSE because usage (15) > limit (10)
+      // This happens under a single lock, so no TOCTOU window
+      const result = board.evaluateGuardsAndAssign(
+        "gc-1",
+        "worker-1",
+        guardConfig,
+        contract.budget!,
+        assignLease.fence,
+      );
+
+      // Contract should be PAUSED, not assigned
+      expect(result.paused).toBe(true);
+      expect(result.reason).toContain("modelCalls");
+      expect(board.getContract("gc-1")?.status).toBe("pending"); // not in_progress
+
+      // Release lease
+      board.releaseLease("master-1", assignLease.fence);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("atomically evaluates guards and assigns: proceeds when usage under limit", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      const lease = board.acquireLease("master-1")!;
+      const contract = makeContract({ id: "gc-2" });
+      board.putContract(contract, lease.fence);
+      board.releaseLease("master-1", lease.fence);
+
+      // Usage well under limit
+      board.recordUsage({
+        contractId: "gc-2",
+        nodeId: "worker-a",
+        sample: { modelCalls: 3, tokens: null, wallTimeMs: 100 },
+      });
+
+      const assignLease = board.acquireLease("master-1")!;
+      // NOTE: do NOT acquire worker lease here; the master's lease is the one
+      // that authorizes the assignment write. Acquiring worker lease would
+      // overwrite the board's current lease and cause fence mismatch.
+
+      // Should ASSIGN (not pause) because 3 < 10
+      const result = board.evaluateGuardsAndAssign(
+        "gc-2",
+        "worker-1",
+        guardConfig,
+        contract.budget!,
+        assignLease.fence,
+      );
+
+      expect(result.paused).toBe(false);
+      expect(board.getContract("gc-2")?.status).toBe("in_progress");
+      expect(board.getContract("gc-2")?.workerNodeId).toBe("worker-1");
+
+      board.releaseLease("master-1", assignLease.fence);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

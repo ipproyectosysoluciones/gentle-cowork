@@ -1,5 +1,5 @@
 /**
- * T5.6 WS Transport Skeleton — Master WebSocket Server
+ * T5.6 WS Transport Skeleton -- Master WebSocket Server
  *
  * Port: 4318 (configurable via WS_PORT env)
  * Binding: 127.0.0.1 (WS_BIND env)
@@ -67,7 +67,7 @@ export type WorkerRegistrationSummary = Pick<WorkerRegistration, "nodeId" | "rol
 
 /**
  * Injectable transport callbacks (T5.9). The server never touches the
- * blackboard — the master-side bridge mirrors these events onto it.
+ * blackboard -- the master-side bridge mirrors these events onto it.
  */
 export interface WSServerOptions {
 	onWorkerRegistered?: (reg: WorkerRegistrationSummary) => void;
@@ -563,7 +563,7 @@ export class WSServer {
 				this.log("WebSocket server closed");
 				resolve();
 			});
-		}
+		});
 
 		// Close HTTP server
 		await new Promise<void>((resolve, reject) => {
@@ -574,7 +574,7 @@ export class WSServer {
 					resolve();
 				}
 			});
-		}
+		});
 	}
 
 	// Test helpers

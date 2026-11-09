@@ -430,7 +430,14 @@ export function openBlackboard(filePath: string): Blackboard {
         nodes.set(diskNode.nodeId, diskNode);
       }
     }
-    if (disk.lease && (!lease || disk.lease.fence > lease.fence)) lease = disk.lease;
+    // Always take disk lease if we don't have one, or if disk lease is newer by timestamp
+    if (disk.lease) {
+      if (!lease) {
+        lease = disk.lease;
+      } else if (Date.parse(disk.lease.expiresAt) > Date.parse(lease.expiresAt)) {
+        lease = disk.lease;
+      }
+    }
     if (disk.lastFence > fenceCounter) fenceCounter = disk.lastFence;
     // Usage aggregates are monotonic: the side with more recorded events is newer.
     for (const [contractId, diskUsage] of Object.entries(disk.usage)) {
@@ -455,7 +462,11 @@ export function openBlackboard(filePath: string): Blackboard {
         const before = snapshot.get(id);
         if (!before || before !== current) touched.add(id);
       }
+      // Save lease before merging from disk, as mergeFromDisk overwrites it
+      const savedLease = lease;
       mergeFromDisk(touched);
+      // Restore lease after mergeFromDisk, as it overwrites the lease variable
+      lease = savedLease;
       const state: BlackboardState = {
         version: STATE_VERSION,
         contracts: [...contracts.values()],
@@ -631,7 +642,8 @@ export function openBlackboard(filePath: string): Blackboard {
         for (const contract of contracts.values()) {
           if (contract.status !== "in_progress") continue;
           const contractLeaseFence = contract.leaseFence ?? 0;
-          if (contractLeaseFence >= lease.fence) continue; // still under current lease
+          // H3: Cryptographic fence must match exactly — not >= (fences are random, not monotonic)
+          if (contractLeaseFence === lease.fence) continue; // still under current lease
           // Find the node that owns this contract (from history)
           const inProgressEntry = contract.history.find((h) => h.status === "in_progress");
           const ownerNodeId = inProgressEntry?.nodeId ?? "";

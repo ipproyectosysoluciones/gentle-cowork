@@ -58,10 +58,18 @@ export function generateFence(): number {
 	for (let i = 0; i < 8; i++) {
 		fence = (fence << 8) | bytes[i];
 	}
-	// Ensure it's positive and reasonable
-	const result = Math.abs(fence) % Number.MAX_SAFE_INTEGER;
-	console.error(`[DEBUG generateFence] Generated fence: ${result}`);
-	return result;
+	// Use rejection sampling to avoid modulo bias:
+	// Number.MAX_SAFE_INTEGER = 2^53 - 1, we have 64 bits.
+	// Accept values in [0, 2^53 - 1) directly.
+	const MAX_SAFE = Number.MAX_SAFE_INTEGER;
+	const mask = (1 << 53) - 1; // 0x1FFFFFFFFFFFFF
+	fence &= mask;
+	// If we got a value >= MAX_SAFE (extremely rare, ~1/2^11), regenerate
+	if (fence >= MAX_SAFE) {
+		return generateFence();
+	}
+	console.error(`[DEBUG generateFence] Generated fence: ${fence}`);
+	return fence;
 }
 
 /** Generates a cryptographically secure nonce (H5). */

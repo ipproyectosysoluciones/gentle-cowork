@@ -50,10 +50,11 @@ function createApiMock(): ApiMock {
 }
 
 /** Command-context mock that captures ui notifications. */
-function createCtxMock(): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn> } {
+function createCtxMock(): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn> } {
   const notify = vi.fn();
-  const ctx = { ui: { notify } } as unknown as ExtensionCommandContext;
-  return { ctx, notify };
+  const confirm = vi.fn(async () => true); // simulate user confirmation
+  const ctx = { ui: { notify, confirm } } as unknown as ExtensionCommandContext;
+  return { ctx, notify, confirm };
 }
 
 /** A custom (non-builtin) tool call — the only kind that can carry a delegation. */
@@ -300,10 +301,11 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
   }
 
   /** Command-context mock with a real project cwd (the blackboard location). */
-  function createCtxMockWithCwd(cwd: string): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn> } {
+  function createCtxMockWithCwd(cwd: string): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn> } {
     const notify = vi.fn();
-    const ctx = { ui: { notify }, cwd } as unknown as ExtensionCommandContext;
-    return { ctx, notify };
+    const confirm = vi.fn(async () => true); // simulate user confirmation
+    const ctx = { ui: { notify, confirm }, cwd } as unknown as ExtensionCommandContext;
+    return { ctx, notify, confirm };
   }
 
   /** The blackboard state file path for a project cwd. */

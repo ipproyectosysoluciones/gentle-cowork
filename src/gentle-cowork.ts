@@ -36,6 +36,7 @@ const STATUS_COMMAND = "cowork";
 const CONTRACT_COMMAND = "cowork-contract";
 const VERIFY_COMMAND = "cowork-verify";
 const CHAIN_COMMAND = "cowork-chain";
+const DOGFOOD_COMMAND = "cowork-dogfood";
 
 /** ODD spec document this feature work is tracked against. */
 const SPEC_REF = "odd/tasks/gentle-cowork-extension.md";
@@ -366,6 +367,44 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
         persistContract(ctx.cwd, failedContract);
         notify(ctx, `${PREFIX} Chain failed: ${message}`, "error");
       }
+    },
+  });
+
+  pi.registerCommand(DOGFOOD_COMMAND, {
+    description: "Phase 5: run dogfooding natively via Pi background jobs (bash_background)",
+    handler: async (args: string, ctx) => {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const subcommand = parts[0] || "run";
+      const timeoutIdx = parts.indexOf("--timeout");
+      const timeoutSeconds = timeoutIdx >= 0 && parts[timeoutIdx + 1] ? parseInt(parts[timeoutIdx + 1], 10) : 300;
+
+      if (subcommand === "help" || subcommand === "--help") {
+        notify(ctx, `${PREFIX} Dogfood native usage: /cowork-dogfood <run|master|worker> [--timeout SECONDS]`);
+        notify(ctx, `  run      - runs master + worker via Pi bash_background (default 300s)`);
+        notify(ctx, `  master   - runs master only (requires --shared-dir PATH)`);
+        notify(ctx, `  worker   - runs worker only (requires --shared-dir PATH)`);
+        return;
+      }
+
+      const sharedDirIdx = parts.indexOf("--shared-dir");
+      const sharedDir = sharedDirIdx >= 0 && parts[sharedDirIdx + 1] ? parts[sharedDirIdx + 1] : undefined;
+
+      const script = subcommand === "master" || subcommand === "worker"
+        ? `scripts/dogfood-${subcommand}.ts`
+        : "scripts/dogfood-native.ts run";
+
+      const timeoutSecondsClamped = Math.min(timeoutSeconds, 1800);
+      const label = `dogfood-${subcommand}`;
+      const cwd = ctx.cwd;
+
+      notify(ctx, `${PREFIX} Starting dogfood native via Pi background job: ${label} (timeout: ${timeoutSecondsClamped}s)`);
+
+      const sharedDirPath = sharedDir || "/tmp/gentle-cowork-dogfood";
+      const command = `cd ${cwd} && DOG_FOOD_SHARED_DIR="${sharedDirPath || "/tmp/gentle-cowork-dogfood"}" npx tsx ${script} --timeout ${timeoutSecondsClamped}`;
+
+      notify(ctx, `${PREFIX} Starting dogfood via Pi background job: ${label} (timeout: ${timeoutSecondsClamped}s)`);
+      notify(ctx, `${PREFIX} Run this command in Pi to start the background job:`);
+      notify(ctx, `  pi --mode rpc --no-session -p '{"tool":"bash_background","args":{"command":"${command.replace(/"/g, '\\"')}", "label": "dogfood-${subcommand}", "cwd": "${ctx.cwd}"}}'`);
     },
   });
 

@@ -72,15 +72,27 @@ mindmap
 
 ## Architecture
 
-```
-Pi / gentle-shell (ODD orchestrator)
-  └── gentle-cowork extension (this repo)
-        ├── tool_call hook — detects delegation triggers
-        ├── TaskContract — lightweight orchestration data
-        └── subagent spawn (pi --mode rpc)
-              ├── cowork-planner (read)
-              ├── cowork-implementer (scoped write)
-              └── cowork-verifier (read + tests)
+```mermaid
+graph TD
+    Orchestrator["Pi / gentle-shell (ODD orchestrator)"] --> Extension["gentle-cowork extension (this repo)"]
+
+    Extension --> Hook["tool_call hook — detects delegation triggers"]
+    Extension --> Contract["TaskContract — lightweight orchestration data"]
+    Extension --> Spawn["subagent spawn (pi --mode rpc)"]
+
+    Spawn --> Planner["cowork-planner (read)"]
+    Spawn --> Implementer["cowork-implementer (scoped write)"]
+    Spawn --> Verifier["cowork-verifier (read + tests)"]
+
+    classDef orchestrator fill:#1e293b,stroke:#334155,stroke-width:2px,color:#f8fafc;
+    classDef extension fill:#0f766e,stroke:#115e59,stroke-width:2px,color:#f0fdfa;
+    classDef component fill:#0369a1,stroke:#075985,stroke-width:2px,color:#f0f9ff;
+    classDef subagent fill:#b45309,stroke:#92400e,stroke-width:2px,color:#fffbeb;
+
+    class Orchestrator orchestrator;
+    class Extension extension;
+    class Hook,Contract,Spawn component;
+    class Planner,Implementer,Verifier subagent;
 ```
 
 ---

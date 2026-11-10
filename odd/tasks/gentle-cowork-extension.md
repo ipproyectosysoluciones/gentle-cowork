@@ -78,9 +78,9 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
   - Integrar con riel de Gentle Shell (artboards listos para implementación nativa)
   - Verificar: dashboard funcional en terminal (artboards validados en canvas gentle-design)
 
-- [ ] **PI-T6** [PI-6] Documentar decisión arquitectónica: gentle-cowork como capa de dominio sobre plataforma nativa
-  - Actualizar README y docs
-  - Clarificar: qué es nativo (infra) vs qué es gentle-cowork (dominio: blackboard, budgets, ODD contracts, metering, oracle)
+- [x] **PI-T6** [PI-6] Documentar decisión arquitectónica: gentle-cowork como capa de dominio sobre plataforma nativa
+  - Actualizar README y docs ✅
+  - Clarificar: qué es nativo (infra) vs qué es gentle-cowork (dominio: blackboard, budgets, ODD contracts, metering, oracle) ✅
 
 ### Log
 

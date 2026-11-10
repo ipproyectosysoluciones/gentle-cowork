@@ -97,6 +97,63 @@ graph TD
 
 ---
 
+## Architectural Decision: gentle-cowork as Domain Layer on Native Platform
+
+> **Decision:** gentle-cowork is a **domain layer** built on top of the native gentle-pi 4.7 platform. We do **not** reimplement infrastructure; we use the platform's native primitives and focus entirely on the orchestration domain.
+
+### What is Native (Infrastructure — provided by gentle-pi 4.7)
+
+| Capability | Native Implementation | gentle-cowork Usage |
+|---|---|---|
+| **Background Jobs** | `bash_background` tool, job registry, monitor tool | Dogfood runner (`/cowork-dogfood`), future remote worker supervision |
+| **Model Fallback Chains** | `profile-fallbacks.json`, automatic failover per agent | PR-Agent reviewer (`nemotron-3-ultra` → `nemotron-3-super`), verifier, orchestrator |
+| **Command Guards** | Native command guard policies (once/session/always/deny) | `/cowork-*` commands with appropriate policies |
+| **Herdr State File** | `~/.herdr/sessions/<session-id>.json` per session | Master/worker lifecycle state export (PI-T3) |
+| **TUI Riel** | Native sidebar/rail integration point | Blackboard dashboard skill (`gentle-cowork-tui`, PI-T5) |
+| **WebSocket Transport** | Native WS server (`src/ws/server.ts`), mTLS hooks | Multi-node transport (Phase 5) |
+| **Blackboard Persistence** | Atomic JSON with file locking, version counter | Contract state, lease/fence, budget/metering |
+| **Crypto Primitives** | `generateFence`, `generateNonce`, `isTimestampFresh` | Lease fencing, replay protection, ODD contracts |
+
+### What is gentle-cowork (Domain Layer)
+
+| Domain | Responsibility |
+|---|---|
+| **Blackboard Contracts** | `TaskContract` lifecycle, status transitions, history, version counter |
+| **Budget & Metering** | `UsageSample`/`UsageLedger`, `evaluateGuards`, `meteredStepExecutor` |
+| **Budget Guards** | `evaluateGuards` with ok/warning/exceeded/unknown, pause+escalate |
+| **ODD Contracts** | `TaskContract` with `specRef`, acceptance criteria, version counter |
+| **Oracle (Metering + Guards)** | `meteredStepExecutor`, `evaluateGuards`, master enforcement |
+| **Role Orchestration** | Planner → Implementer → Verifier chain, CHANGES retry loop |
+| **Verification** | `cowork-verifier` with per-S# verdict, blackboard persistence |
+| **Delegation Hook** | `tool_call` interception → role orchestration instead of native delegation |
+| **Blackboard Persistence** | Contract state, leases, fences, budget/metering in versioned JSON |
+| **WebSocket Protocol** | Message types, framing, lease/fence discipline |
+
+### Decision Rationale
+
+1. **Don't rebuild infra.** gentle-pi 4.7 provides battle-tested primitives (background jobs, fallback chains, command guards, Herdr, TUI riel, WS transport, crypto). Reimplementing them would duplicate effort and increase maintenance burden.
+
+2. **Double down on domain.** The unique value of gentle-cowork is the *orchestration logic*: ODD contracts, role chains, budget guards, metering, verification verdicts, blackboard contract lifecycle. This is where we invest.
+
+3. **Clean separation.** Native infra is stable, versioned, and shared across all extensions. Domain logic evolves with our ODD workflow and can be tested independently.
+
+4. **Portability.** If gentle-pi evolves its primitives, we migrate the integration points — not the domain logic.
+
+4. **No SDD artifacts.** We don't generate formal specs/design docs for the platform; we consume its native APIs. Our ODD contracts live in `odd/tasks/` and drive the domain.
+
+### Migration Status (Platform Integration v4.7)
+
+| PI Task | Status | Notes |
+|---|---|---|
+| PI-T1: Dogfood → native background jobs | ✅ Done | `bash_background`, removed `run-dogfood.sh` |
+| PI-T2: Native command guards | ⏳ Planned | `/cowork-*` with native guards |
+| PI-T3: Herdr state export | ⏳ Planned | `src/herdr-state.ts` exists |
+| PI-T4: Native fallback chains | ✅ Done | `profile-fallbacks.json` + PR-Agent `fallback_models` |
+| PI-T5: TUI dashboard skill | ✅ Done | `design/blackboard-dashboard/`, `src/dashboard.ts` |
+| PI-T6: Architectural docs | ✅ This section | Decision documented |
+
+---
+
 ## The three roles
 
 | Role | Permission | Responsibility |

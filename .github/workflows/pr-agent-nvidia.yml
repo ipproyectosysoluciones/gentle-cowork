@@ -93,22 +93,26 @@ jobs:
             }
 
       - name: PR Agent with NVIDIA Nemotron
-        uses: the-pr-agent/pr-agent@main
+        # Pinned to v0.50.0: @main floats and its default model chain changed
+        # under us (gpt-6.1-sol -> 404 against the NVIDIA endpoint, PR #135).
+        uses: the-pr-agent/pr-agent@v0.50.0
         id: pragent
         env:
-          # NVIDIA NIM API (OpenAI-compatible)
+          # NVIDIA NIM API (OpenAI-compatible). litellm reads these env vars
+          # directly.
+          OPENAI_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           OPENAI_KEY: ${{ secrets.NVIDIA_API_KEY }}
           OPENAI_BASE_URL: "https://integrate.api.nvidia.com/v1"
-          OPENAI_MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
-          
+
+          # pr-agent reads settings through Dynaconf: overrides use the
+          # SECTION__KEY (double underscore) format. OPENAI_MODEL is NOT a
+          # recognized variable - [config] model is the real setting.
+          CONFIG__MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
+          CONFIG__FALLBACK_MODELS: "nvidia/nemotron-3-super-120b-a12b"
+          # Custom models are absent from PR-Agent's built-in limits and
+          # LiteLLM metadata: without a resolved input-token limit the token
+          # budget fails closed ("Unable to resolve a positive input-token
+          # limit", PR #136 run). 128000 = standard NVIDIA NIM LLM context.
+          CONFIG__CUSTOM_MODEL_MAX_TOKENS: "128000"
+
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-          # PR-Agent configuration
-          PR_AGENT_COMMANDS: "review,describe"
-          PR_AGENT_PR_REVIEWER_REVIEW_EFFORT: "medium"
-          PR_AGENT_PR_REVIEWER_FOCUS_ON_SECURITY: "true"
-          PR_AGENT_PR_REVIEWER_FOCUS_ON_PERFORMANCE: "true"
-          PR_AGENT_PR_REVIEWER_REQUIRE_TESTS: "true"
-          
-          # Config from .toml
-          CONFIG_PATH: ".github/pr-agent.toml"

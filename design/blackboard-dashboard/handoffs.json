@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "chosen": "01-main-dashboard.html",
+  "handoffs": {
+    "01-main-dashboard.html": {
+      "status": "sent",
+      "queued": true,
+      "sentAt": "2026-11-10T05:30:58.622Z",
+      "startedAt": null,
+      "implementedAt": null,
+      "feature": "odd/tasks/gentle-cowork-extension.md"
+    }
+  }
+}

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gentle Cowork Blackboard Dashboard - Alert View</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "JetBrains Mono", "Fira Code", "Monospace";
+    font-size: 12px;
+    line-height: 1.4;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    width: 180ch;
+    height: 50ch;
+    padding: 0;
+    overflow: hidden;
+  }
+  .dashboard { width: 100%; height: 100%; display: grid; grid-template-rows: 1fr 1fr 1fr; gap: 1px; background: #313244; padding: 1px; }
+  
+  /* Alert Header */
+  .alert-header { grid-row: 1; background: #181825; border-bottom: 1px solid #45475a; padding: 0 2ch; display: flex; align-items: center; justify-content: space-between; }
+  .alert-title { font-weight: 700; color: #f38ba8; font-size: 14px; display: flex; align-items: center; gap: 1ch; }
+  .alert-badge { background: #f38ba8; color: #181825; padding: 0.1ch 0.6ch; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .alert-count { color: #f9e2af; font-size: 12px; font-weight: 600; }
+  .alert-subtitle { color: #6c7086; font-size: 11px; }
+  .alert-clock { color: #fab387; font-variant-numeric: tabular-nums; }
+
+  /* Critical Alerts Panel */
+  .critical-alerts { grid-row: 2; background: #1e1e2e; border-right: 1px solid #45475a; padding: 1ch; overflow-y: auto; }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 0.5ch; border-bottom: 1px solid #45475a; margin-bottom: 1ch; }
+  .panel-title { font-weight: 700; color: #f38ba8; font-size: 12px; }
+  .panel-count { color: #6c7086; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .alert-item { background: #313244; border: 1px solid #45475a; border-left: 4px solid #f38ba8; border-radius: 4px; padding: 1ch; margin-bottom: 1ch; }
+  .alert-item.warning { border-left-color: #f9e2af; }
+  .alert-item.info { border-left-color: #89b4fa; }
+  .alert-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5ch; }
+  .alert-type { font-size: 10px; padding: 0.1ch 0.5ch; border-radius: 3px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .type-critical { background: #f38ba8; color: #181825; }
+  .type-warning { background: #f9e2af; color: #181825; }
+  .type-info { background: #89b4fa; color: #181825; }
+  .alert-contract { font-weight: 600; color: #cdd6f4; font-size: 11px; }
+  .alert-message { color: #cdd6f4; font-size: 11px; margin-top: 0.25ch; }
+  .alert-meta { display: flex; gap: 2ch; margin-top: 0.5ch; font-size: 10px; color: #6c7086; }
+  .alert-meta-item { display: flex; align-items: center; gap: 0.5ch; }
+  .alert-meta-label { color: #6c7086; }
+  .alert-meta-value { color: #cdd6f4; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .alert-actions { display: flex; gap: 1ch; margin-top: 0.75ch; padding-top: 0.75ch; border-top: 1px solid #45475a; }
+  .alert-btn { background: #313244; border: 1px solid #45475a; color: #cdd6f4; padding: 0.25ch 0.75ch; border-radius: 3px; font-size: 10px; cursor: pointer; transition: all 0.15s; }
+  .alert-btn:hover { border-color: #89b4fa; background: #45475a; }
+  .alert-btn.primary { background: #1e66f5; border-color: #1e66f5; color: #cdd6f4; }
+  .alert-btn.danger { background: #f38ba8; border-color: #f38ba8; color: #181825; }
+
+  /* Budget Critical Panel */
+  .budget-critical { grid-row: 2; grid-column: 2; background: #1e1e2e; border-right: 1px solid #45475a; padding: 1ch; overflow-y: auto; }
+  .budget-alert-item { background: #313244; border: 1px solid #45475a; border-radius: 4px; padding: 1ch; margin-bottom: 1ch; }
+  .budget-alert-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75ch; }
+  .budget-name { font-weight: 700; color: #cdd6f4; font-size: 11px; }
+  .budget-usage { display: flex; align-items: center; gap: 1ch; }
+  .budget-bar { width: 30ch; height: 0.6ch; background: #313244; border-radius: 3px; overflow: hidden; }
+  .budget-fill { height: 100%; border-radius: 3px; transition: width 0.3s, background 0.3s; }
+  .budget-fill.ok { background: linear-gradient(90deg, #a6e3a1, #89dceb); }
+  .budget-fill.warn { background: linear-gradient(90deg, #f9e2af, #fab387); }
+  .budget-fill.crit { background: linear-gradient(90deg, #f38ba8, #eba0ac); }
+  .budget-value { color: #cdd6f4; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 12ch; text-align: right; }
+  .budget-limit { color: #6c7086; font-size: 10px; }
+  .budget-thresholds { display: flex; flex-direction: column; gap: 0.25ch; font-size: 10px; color: #6c7086; margin-top: 0.5ch; }
+  .threshold { display: flex; align-items: center; gap: 0.5ch; }
+  .threshold-marker { width: 0.6ch; height: 0.6ch; border-radius: 50%; }
+  .threshold.warn { background: #f9e2af; }
+  .threshold.crit { background: #f38ba8; }
+  .threshold.ok { background: #a6e3a1; }
+  .threshold-label { color: #9399b2; font-size: 9px; }
+
+  /* Lease Expiring Panel */
+  .lease-critical { grid-row: 2; grid-column: 3; background: #1e1e2e; padding: 1ch; overflow-y: auto; }
+  .lease-alert-item { background: #313244; border: 1px solid #45475a; border-left: 4px solid; border-radius: 4px; padding: 1ch; margin-bottom: 1ch; }
+  .lease-alert-item.critical { border-left-color: #f38ba8; }
+  .lease-alert-item.warning { border-left-color: #f9e2af; }
+  .lease-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5ch; }
+  .lease-contract { font-weight: 600; color: #cdd6f4; font-size: 11px; }
+  .lease-ttl { font-size: 10px; padding: 0.1ch 0.4ch; border-radius: 2px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ttl-critical { background: #f38ba8; color: #181825; }
+  .ttl-warning { background: #f9e2af; color: #181825; }
+  .ttl-ok { background: #a6e3a1; color: #181825; }
+  .lease-meta { display: flex; flex-direction: column; gap: 0.25ch; font-size: 10px; color: #6c7086; margin-top: 0.5ch; }
+  .lease-meta-row { display: flex; gap: 0.5ch; }
+  .lease-meta-label { color: #6c7086; min-width: 7ch; }
+  .lease-meta-value { color: #cdd6f4; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .lease-progress { height: 0.4ch; background: #45475a; border-radius: 2px; overflow: hidden; margin-top: 0.5ch; }
+  .lease-progress-bar { height: 100%; transition: width 0.3s; }
+  .lease-progress-bar.critical { background: linear-gradient(90deg, #f38ba8, #eba0ac); }
+  .lease-progress-bar.warning { background: linear-gradient(90deg, #f9e2af, #fab387); }
+  .lease-progress-bar.ok { background: linear-gradient(90deg, #a6e3a1, #89dceb); }
+
+  /* System Health Footer */
+  .system-health { grid-row: 3; grid-column: 1 / -1; background: #181825; border-top: 1px solid #45475a; padding: 0.5ch 2ch; display: flex; gap: 3ch; align-items: center; flex-wrap: wrap; }
+  .health-item { display: flex; align-items: center; gap: 1ch; }
+  .health-label { color: #6c7086; font-size: 11px; min-width: 12ch; }
+  .health-status { display: flex; align-items: center; gap: 0.5ch; }
+  .health-dot { width: 0.6ch; height: 0.6ch; border-radius: 50%; }
+  .health-dot.ok { background: #a6e3a1; }
+  .health-dot.warn { background: #f9e2af; }
+  .health-dot.crit { background: #f38ba8; }
+  .health-text { color: #cdd6f4; font-size: 11px; font-weight: 500; }
+  .health-detail { color: #6c7086; font-size: 10px; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1e1e2e; }
+  ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #585b70; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="dashboard">
+  <!-- Alert Header -->
+  <header class="alert-header">
+    <div>
+      <div class="alert-title">⚠ <span class="alert-badge">ALERT MODE</span> Gentle Cowork — Critical Issues</div>
+      <div class="alert-subtitle">Active critical issues requiring attention · Leases expiring · Budget thresholds · Failed contracts</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:2ch;">
+      <span class="alert-count" id="alert-total">3 critical</span>
+      <span class="alert-clock" id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <!-- Critical Alerts -->
+  <section class="critical-alerts" aria-label="Critical Alerts">
+    <header class="panel-header">
+      <span class="panel-title">Critical Alerts</span>
+      <span class="panel-count" id="critical-count">2 critical, 1 warning</span>
+    </header>
+    <div id="critical-list">
+      <article class="alert-item">
+        <header class="alert-header-row">
+          <span class="alert-type type-critical">CRITICAL</span>
+          <span class="alert-contract">gc-1</span>
+        </header>
+        <p class="alert-message">Lease expiring in 5.1 seconds — contract will be marked orphaned if not renewed</p>
+        <div class="alert-meta">
+          <span class="alert-meta-item"><span class="alert-meta-label">Worker:</span><span class="alert-meta-value">worker-ghi789</span></span>
+          <span class="alert-meta-item"><span class="alert-meta-label">Fence:</span><span class="alert-meta-value">1847392</span></span>
+          <span class="alert-meta-item"><span class="alert-meta-label">Expires:</span><span class="alert-meta-value">14:33:25</span></span>
+        </div>
+        <div class="alert-actions">
+          <button class="alert-btn primary">Renew Lease</button>
+          <button class="alert-btn danger">Force Release</button>
+          <button class="alert-btn">View Contract</button>
+        </div>
+      </article>
+      <article class="alert-item warning">
+        <header class="alert-header-row">
+          <span class="alert-type type-warning">WARNING</span>
+          <span class="alert-contract">Budget: Tokens</span>
+        </header>
+        <p class="alert-message">Token budget at 76% — approaching 80% warning threshold</p>
+        <div class="alert-meta">
+          <span class="alert-meta-item"><span class="alert-meta-label">Current:</span><span class="alert-meta-value">15,234 / 20,000</span></span>
+          <span class="alert-meta-item"><span class="alert-meta-label">Threshold:</span><span class="alert-meta-value">80% (16,000)</span></span>
+          <span class="alert-meta-item"><span class="alert-meta-label">Remaining:</span><span class="alert-meta-value">766 tokens</span></span>
+        </div>
+        <div class="alert-actions">
+          <button class="alert-btn primary">Throttle Workers</button>
+          <button class="alert-btn">View Details</button>
+        </div>
+      </article>
+      <article class="alert-item info">
+        <header class="alert-header-row">
+          <span class="alert-type type-info">INFO</span>
+          <span class="alert-contract">gc-5</span>
+        </header>
+        <p class="alert-message">Contract stuck in pending — no workers with 'planner' capability available</p>
+        <div class="alert-meta">
+          <span class="alert-meta-item"><span class="alert-meta-label">Required:</span><span class="meta-value">planner</span></span>
+          <span class="alert-meta-item"><span class="alert-meta-label">Available:</span><span class="meta-value">0 workers</span></span>
+        </div>
+        <div class="alert-actions">
+          <button class="alert-btn">Spawn Planner</button>
+          <button class="alert-btn">View Queue</button>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Budget Critical -->
+  <section class="budget-critical" aria-label="Budget Critical">
+    <header class="panel-header">
+      <span class="panel-title">Budget Thresholds</span>
+      <span class="panel-count">1 critical, 1 warning</span>
+    </header>
+    <div id="budget-list">
+      <article class="budget-alert-item">
+        <header class="budget-alert-header">
+          <span class="budget-name">Tokens</span>
+          <div class="budget-usage">
+            <div class="budget-bar"><div class="budget-fill crit" style="width: 76%"></div></div>
+            <span class="budget-value">15,234 / 20,000</span>
+            <span class="budget-limit">(76%)</span>
+          </div>
+        </header>
+        <div class="budget-thresholds">
+          <div class="threshold"><span class="threshold-marker warn"></span><span class="threshold-label">Warning at 80% (16,000) — in 766 tokens</span></div>
+          <div class="threshold"><span class="threshold-marker crit"></span><span class="threshold-label">Critical at 100% (20,000) — in 4,766 tokens</span></div>
+        </div>
+      </article>
+      <article class="budget-alert-item">
+        <header class="budget-alert-header">
+          <span class="budget-name">Wall Time</span>
+          <div class="budget-usage">
+            <div class="budget-bar"><div class="budget-fill ok" style="width: 22%"></div></div>
+            <span class="budget-value">1.2h / 5h</span>
+            <span class="budget-limit">(24%)</span>
+          </div>
+        </header>
+        <div class="budget-thresholds">
+          <div class="threshold"><span class="threshold-marker warn"></span><span class="threshold-label">Warning at 80% (4h)</span></div>
+          <div class="threshold"><span class="threshold-marker crit"></span><span class="threshold-label">Critical at 100% (5h)</span></div>
+        </div>
+      </article>
+      <article class="budget-alert-item">
+        <header class="budget-alert-header">
+          <span class="budget-name">Model Calls</span>
+          <div class="budget-usage">
+            <div class="budget-bar"><div class="budget-fill ok" style="width: 45%"></div></div>
+            <span class="budget-value">45 / 100</span>
+            <span class="budget-limit">(45%)</span>
+          </div>
+        </header>
+        <div class="budget-thresholds">
+          <div class="threshold"><span class="threshold-marker warn"></span><span class="threshold-label">Warning at 80% (80 calls)</span></div>
+          <div class="threshold"><span class="threshold-marker crit"></span><span class="threshold-label">Critical at 100% (100 calls)</span></div>
+        </div>
+      </article>
+      <article class="budget-alert-item">
+        <header class="budget-alert-header">
+          <span class="budget-name">Events</span>
+          <div class="budget-usage">
+            <div class="budget-bar"><div class="budget-fill ok" style="width: 32%"></div></div>
+            <span class="budget-value">16 / 50</span>
+            <span class="budget-limit">(32%)</span>
+          </div>
+        </header>
+        <div class="budget-thresholds">
+          <div class="threshold"><span class="threshold-marker warn"></span><span class="threshold-label">Warning at 80% (40 events)</span></div>
+          <div class="threshold"><span class="threshold-marker crit"></span><span class="threshold-label">Critical at 100% (50 events)</span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Lease Expiring -->
+  <section class="lease-critical" aria-label="Expiring Leases">
+    <header class="panel-header">
+      <span class="panel-title">Expiring Leases</span>
+      <span class="panel-count">1 critical, 1 warning</span>
+    </header>
+    <div id="lease-list">
+      <article class="lease-alert-item critical">
+        <header class="lease-header-row">
+          <span class="lease-contract">gc-1</span>
+          <span class="lease-ttl ttl-critical">5.1s</span>
+        </header>
+        <div class="lease-meta">
+          <div class="lease-meta-row"><span class="lease-meta-label">Holder:</span><span class="lease-meta-value">worker-ghi789</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">Fence:</span><span class="lease-meta-value">1847392</span></div>
+        </div>
+        <div class="lease-progress"><div class="lease-progress-bar critical" style="width: 17%"></div></div>
+      </article>
+      <article class="lease-alert-item warning">
+        <header class="lease-header-row">
+          <span class="lease-contract">gc-3</span>
+          <span class="lease-ttl ttl-warning">12.3s</span>
+        </header>
+        <div class="lease-meta">
+          <div class="lease-meta-row"><span class="lease-meta-label">Holder:</span><span class="lease-meta-value">worker-def456</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">Fence:</span><span class="lease-meta-value">1547392</span></div>
+        </div>
+        <div class="lease-progress"><div class="lease-progress-bar warning" style="width: 41%"></div></div>
+      </article>
+      <article class="lease-alert-item ok">
+        <header class="lease-header-row">
+          <span class="lease-contract">gc-4</span>
+          <span class="lease-ttl ttl-ok">28.5s</span>
+        </header>
+        <div class="lease-meta">
+          <div class="lease-meta-row"><span class="lease-meta-label">Holder:</span><span class="lease-meta-value">worker-abc123</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">Fence:</span><span class="lease-meta-value">2047333</span></div>
+        </div>
+        <div class="lease-progress"><div class="lease-progress-bar ok" style="width: 72%"></div></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- System Health Footer -->
+  <footer class="system-health" aria-label="System Health">
+    <div class="health-item"><span class="health-label">Master</span><div class="health-status"><span class="health-dot ok"></span><span class="health-text">Running</span></div></div>
+    <div class="health-item"><span class="health-label">Workers</span><div class="health-status"><span class="health-dot ok"></span><span class="health-text">3 alive</span></div></div>
+    <div class="health-item"><span class="health-label">Leases</span><div class="health-status"><span class="health-dot warn"></span><span class="health-text">3 active, 1 expiring</span></div></div>
+    <div class="health-item"><span class="health-label">Budget</span><div class="health-status"><span class="health-dot warn"></span><span class="health-text">Tokens 76% (warn)</span></div></div>
+    <div class="health-item"><span class="health-label">Sync</span><div class="health-status"><span class="health-dot ok"></span><span class="health-text">Synced 2s ago</span></div></div>
+    <div class="health-item"><span class="health-label">Queue</span><div class="health-status"><span class="health-dot info"></span><span class="health-text">1 pending (no planner)</span></div></div>
+  </footer>
+</div>
+
+<script>
+  function updateClock() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-US', {hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+  setInterval(updateClock, 1000); updateClock();
+</script>
+</body>
+</html>

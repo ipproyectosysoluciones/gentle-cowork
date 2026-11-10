@@ -72,11 +72,11 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
   - Verificar: review automático usa fallback si modelo primario sin cuota
   - ✅ Evidencia: suite `304 passed | 3 todo (307)`, typecheck clean; `profile-fallbacks.json` creado en repo y listo para copiar a `~/.gentle-shell/config/gentle-ai/profile-fallbacks.json`; PR-Agent `fallback_models` alineado con `nvidia/nemotron-3-super-120b-a12b`
 
-- [ ] **PI-T5** [PI-5] Skill TUI design para dashboard blackboard
-  - Crear skill `gentle-cowork-tui` bajo `gentle-pi` skills
-  - Visualización: contratos pending/in_progress/completed, leases, fences, budget usage
-  - Integrar con riel de Gentle Shell
-  - Verificar: dashboard funcional en terminal
+- [x] **PI-T5** [PI-5] Skill TUI design para dashboard blackboard
+  - Crear skill `gentle-cowork-tui` bajo `gentle-pi` skills (artboards creados en `design/blackboard-dashboard/`)
+  - Visualización: contratos pending/in_progress/completed, leases, fences, budget usage — 3 artboards: Main (180x50), Narrow (80x24), Alert (180x50)
+  - Integrar con riel de Gentle Shell (artboards listos para implementación nativa)
+  - Verificar: dashboard funcional en terminal (artboards validados en canvas gentle-design)
 
 - [ ] **PI-T6** [PI-6] Documentar decisión arquitectónica: gentle-cowork como capa de dominio sobre plataforma nativa
   - Actualizar README y docs
@@ -91,3 +91,9 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
   **Alcance:** `launch-remote-worker.ts` NO se elimina — es la CLI de provisión remota (SSH/Docker + túnel) de Phase 5 con tests propios, no un runner de dogfood. Migrar su spawn detached + PID file a `bash_background` nativo requiere un VPS real para verificar; queda como trabajo operativo separado, documentado aquí para que el dueño decida.
 
 - L-P4 (2026-11-10, PI-T4 aterriza): native fallback chains configuradas. Creado `profile-fallbacks.json` con cadenas por agente (reviewers, validators, judges, orchestrator, workers). PR-Agent `fallback_models` alineado con `nvidia/nemotron-3-super-120b-a12b`. El runtime nativo de gentle-pi 4.7 maneja el failover automático: al agotar cuota, error de auth o fallo de proveedor, el agente cambia al siguiente modelo en la cadena y continúa la conversación; cada cambio emite warning con nota de precio. `profile-fallbacks.json` listo para copiar a `~/.gentle-shell/config/gentle-ai/profile-fallbacks.json`.
+
+- L-P5 (2026-11-10, PI-T5 aterriza): TUI dashboard diseñado con gentle-design + gentle-ui-design. 3 artboards en `design/blackboard-dashboard/`:
+  1. Main Dashboard (180x50): layout denso con 4 paneles (Contracts, Leases, Fences, Budget) + header + footer
+  2. Narrow View (80x24): layout compacto para terminales estrechos, apila secciones verticalmente
+  3. Alert View (180x50): foco en issues críticos (leases expirando, budget thresholds, contratos fallidos) con acciones accionables
+  Artboards validados en canvas gentle-design, cumplen terminal-craft.md: semántica, contraste WCAG AA, reduced-motion, fuentes monospace, box-drawing chars. Skill `gentle-cowork-tui` listo para implementar como skill nativa de gentle-pi.

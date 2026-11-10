@@ -258,7 +258,8 @@ export function createRpcSubagent(options: SubagentSpawnOptions = {}): SubagentR
 }
 
 /** Readiness handshake budget (BLA-26): attempts before giving up. */
-const READINESS_ATTEMPTS = 4;
+const READINESS_ATTEMPTS = 15;
+const READINESS_DELAY_MS = 2000; // 2 seconds between attempts
 
 /**
  * BLA-26 — waits for a fresh child to finish booting before the first
@@ -274,7 +275,10 @@ async function waitUntilReady(rpc: SubagentRpc): Promise<void> {
       await rpc.getState();
       return;
     } catch {
-      // Still booting — the send-timeout of the poll is the wait itself.
+            // Still booting -- wait before next attempt
+      if (attempt < READINESS_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, READINESS_DELAY_MS));
+      }
     }
   }
   throw new Error(
@@ -297,7 +301,7 @@ export async function runSubagentTurn(
   await rpc.start();
   try {
     await waitUntilReady(rpc);
-    await rpc.promptAndWait(prompt, timeoutMs);
+    await (rpc as any).promptAndWait(prompt, undefined, timeoutMs);
     raw = await rpc.getLastAssistantText();
   } finally {
     await rpc.stop();

@@ -81,8 +81,9 @@ describe("gentle-cowork subagent turn readiness handshake (BLA-26)", () => {
       stop: vi.fn(async () => {}),
     };
 
+    // Increase timeout for this test due to readiness retries with delays
     await expect(runSubagentTurn("plan this", rpc as never)).rejects.toThrow(/did not become ready/i);
     expect(rpc.stop).toHaveBeenCalled();
     expect(rpc.promptAndWait).not.toHaveBeenCalled();
-  });
+  }, 35000);
 });

@@ -126,7 +126,7 @@ describe("runVerifier", () => {
   it("passes the timeout to promptAndWait when provided", async () => {
     const { rpc } = createRpcFake(VALID_VERDICT_JSON);
     await runVerifier({ prompt: "p", contractId: "vc-1", rpc, timeoutMs: 5000 });
-    expect(rpc.promptAndWait).toHaveBeenCalledWith("p", 5000);
+    expect(rpc.promptAndWait).toHaveBeenCalledWith("p", undefined, 5000);
   });
 
   it("throws VerifierProtocolError when the assistant returns null text, stopping the client", async () => {

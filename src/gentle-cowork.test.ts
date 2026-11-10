@@ -178,7 +178,7 @@ describe("gentle-cowork /cowork-verify (Phase 1)", () => {
       await local.commands.get("cowork-verify")!("", ctx);
 
       expect(notify).toHaveBeenCalledWith(expect.stringContaining("APPROVE"), "info");
-      expect(rpcFake.promptAndWait).toHaveBeenCalledWith(expect.stringContaining("cowork-verifier"), 120_000);
+      expect(rpcFake.promptAndWait).toHaveBeenCalledWith(expect.stringContaining("cowork-verifier"), undefined, 300_000);
       const logged = errorSpy.mock.calls.flat().map(String).join(" ");
       expect(logged).toContain("vc-1");
       expect(logged).toContain("APPROVE");

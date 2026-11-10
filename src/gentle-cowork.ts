@@ -42,14 +42,14 @@ const DOGFOOD_COMMAND = "cowork-dogfood";
 const SPEC_REF = "odd/tasks/gentle-cowork-extension.md";
 
 /** Overall timeout for one verifier spawn, in milliseconds. */
-const VERIFY_TIMEOUT_MS = 120_000;
+const VERIFY_TIMEOUT_MS = 300_000;
 
 /**
  * Overall timeout for one chain role turn, in milliseconds. Measured real
  * cowork-implementer turn: ~339s (full spec read + scoped write + artifact
  * JSON) — probe 2026-10-16; keep a comfortable margin above it.
  */
-const CHAIN_TIMEOUT_MS = 600_000;
+const CHAIN_TIMEOUT_MS = 900_000;
 
 /** Maximum implementer attempts per step after CHANGES verdicts (ROADMAP). */
 const MAX_CHAIN_RETRIES = 3;

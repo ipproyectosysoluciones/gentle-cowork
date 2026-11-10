@@ -107,10 +107,13 @@ function createChainConnectFake(options: { verifierAlwaysChanges?: boolean } = {
         return [];
       }),
       getLastAssistantText: vi.fn(async () => {
-        const contractId = lastPrompt.match(/cc-\d+/)?.[0] ?? "cc-1";
+        const contractId = lastPrompt.match(/(cc|vc)-\d+/)?.[0] ?? "cc-1";
         if (lastPrompt.includes("cowork-planner")) return planJson;
         if (lastPrompt.includes("cowork-implementer")) return artifactJson;
-        if (lastPrompt.includes("cowork-verifier")) {
+        if (
+          lastPrompt.includes("verification agent for gentle-cowork ODD spec compliance") ||
+          lastPrompt.includes("cowork-verifier")
+        ) {
           const outcome = options.verifierAlwaysChanges ? "CHANGES" : "APPROVE";
           return JSON.stringify({
             contractId,
@@ -178,7 +181,7 @@ describe("gentle-cowork /cowork-verify (Phase 1)", () => {
       await local.commands.get("cowork-verify")!("", ctx);
 
       expect(notify).toHaveBeenCalledWith(expect.stringContaining("APPROVE"), "info");
-      expect(rpcFake.promptAndWait).toHaveBeenCalledWith(expect.stringContaining("cowork-verifier"), undefined, 300_000);
+      expect(rpcFake.promptAndWait).toHaveBeenCalledWith(expect.stringContaining("verification agent for gentle-cowork ODD spec compliance"), undefined, 300_000);
       const logged = errorSpy.mock.calls.flat().map(String).join(" ");
       expect(logged).toContain("vc-1");
       expect(logged).toContain("APPROVE");

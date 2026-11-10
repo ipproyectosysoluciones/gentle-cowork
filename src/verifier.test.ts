@@ -154,13 +154,13 @@ describe("buildVerifyPrompt", () => {
       { id: "S1", text: "First requirement." },
       { id: "S2", text: "Second requirement." },
     ]);
-    expect(prompt).toContain("cowork-verifier");
+    expect(prompt).toContain("verification agent for gentle-cowork ODD spec compliance");
     expect(prompt).toContain("vc-1");
     expect(prompt).toContain("odd/tasks/widget.md");
     expect(prompt).toContain("S1: First requirement.");
     expect(prompt).toContain("S2: Second requirement.");
-    expect(prompt).toContain('"APPROVE"');
-    expect(prompt).toContain('"CHANGES"');
+    expect(prompt).toContain('"APPROVE|CHANGES"');
+    expect(prompt).toContain('"pass|fail|untested"');
   });
 
   it("Phase 1 test requirements target the repository spec types", () => {

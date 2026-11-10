@@ -250,7 +250,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
     description:
       "Phase 1: spawn a cowork-verifier subagent (pi --mode rpc) with a test prompt and log its verdict",
     handler: async (_args: string, ctx) => {
-      const contractId = `vc-${++verifyCounter}`;
+      console.error(`[gentle-cowork] VERIFY_COMMAND handler STARTED`);
       notify(
         ctx,
         `${PREFIX} Spawning cowork-verifier via pi --mode rpc (Phase 1 test, ${PHASE1_TEST_REQUIREMENTS.length} requirements)...`,
@@ -298,6 +298,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
   pi.registerCommand(CHAIN_COMMAND, {
     description: "Phase 2: run the full planner → implementer → verifier chain with a test objective",
     handler: async (_args: string, ctx) => {
+      console.error(`[gentle-cowork] CHAIN_COMMAND handler STARTED`);
       const contractId = `ch-${++chainCounter}`;
       // Phase 4 — persist the chain contract as in_progress from the moment
       // the chain starts, so an interrupted run leaves a resumable record.

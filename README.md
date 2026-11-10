@@ -31,12 +31,12 @@ mindmap
     Workflow
       ODD classifies
       Delegate by named reason
-      Plan -> Implement -> Verify
+      Plan --> Implement --> Verify
       APPROVE or CHANGES
     Contracts
       TaskContract
-        id | objective | role
-        scope | criteria | specRef
+        id - objective - role
+        scope - criteria - specRef
       Spec by reference
         odd/tasks/<feature>.md
     Principles
@@ -72,15 +72,15 @@ mindmap
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    A[Pi – gentle-shell (ODD orchestrator)] --> B[gentle-cowork extension]
-    B --> C[tool_call hook detects delegation triggers]
-    B --> D[TaskContract lightweight orchestration data]
-    B --> E[subagent spawn (pi --mode rpc)]
-    E --> F[cowork-planner (read)]
-    E --> G[cowork-implementer (scoped write)]
-    E --> H[cowork-verifier (read + tests)]
+```
+Pi / gentle-shell (ODD orchestrator)
+  └── gentle-cowork extension (this repo)
+        ├── tool_call hook — detects delegation triggers
+        ├── TaskContract — lightweight orchestration data
+        └── subagent spawn (pi --mode rpc)
+              ├── cowork-planner (read)
+              ├── cowork-implementer (scoped write)
+              └── cowork-verifier (read + tests)
 ```
 
 ---

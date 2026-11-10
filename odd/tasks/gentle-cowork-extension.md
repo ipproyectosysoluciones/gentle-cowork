@@ -66,10 +66,11 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
   - Incluir: nodeId, role, contracts assigned, last heartbeat
   - Verificar: visible en riel de Gentle Shell
 
-- [ ] **PI-T4** [PI-4] Fallback chains nativas (8 modelos) en PR-Agent + orchestration
-  - Configurar `model_fallback_chain` en `.github/pr-agent.toml`
-  - Mapear a native fallback chains de gentle-pi
+- [x] **PI-T4** [PI-4] Fallback chains nativas (8 modelos) en PR-Agent + orchestration
+  - Configurar `model_fallback_chain` en `.github/pr-agent.toml` (ya tenía `fallback_models`)
+  - Mapear a native fallback chains de gentle-pi: creado `profile-fallbacks.json` con cadenas por agente
   - Verificar: review automático usa fallback si modelo primario sin cuota
+  - ✅ Evidencia: suite `304 passed | 3 todo (307)`, typecheck clean; `profile-fallbacks.json` creado en repo y listo para copiar a `~/.gentle-shell/config/gentle-ai/profile-fallbacks.json`; PR-Agent `fallback_models` alineado con `nvidia/nemotron-3-super-120b-a12b`
 
 - [ ] **PI-T5** [PI-5] Skill TUI design para dashboard blackboard
   - Crear skill `gentle-cowork-tui` bajo `gentle-pi` skills
@@ -88,3 +89,5 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
 - L-P3 (2026-11-09, PI-T1 aterriza): `scripts/run-dogfood.sh` eliminado; `pnpm run dogfood:run` ahora ejecuta `tsx scripts/dogfood-native.ts run --timeout 180`. `/cowork-dogfood` (extensión) registra el comando que emite la invocación nativa `bash_background` de gentle-pi 4.7.0 para master/worker/run — la salida del job es la notificación, sin polling del runner custom.
   **Bug real encontrado por el dogfood e2e:** `generateFence()`/`generateNonce()` (`src/ws/protocol.ts`) usaban `require("node:crypto")` inline (introducido por el fix CodeQL del bias en `6efbcf0`), lo que revienta en ESM (`require is not defined`) — vitest lo tolera en su transform, tsx no. Fix: import estático de `randomBytes`. El dogfood volvió a correr: EXIT 0, 4/4 contratos completados, coordinación master/worker vía blackboard OK. Lección: los scripts dogfood en tsx son el canario ESM que la suite vitest no cubre.
   **Alcance:** `launch-remote-worker.ts` NO se elimina — es la CLI de provisión remota (SSH/Docker + túnel) de Phase 5 con tests propios, no un runner de dogfood. Migrar su spawn detached + PID file a `bash_background` nativo requiere un VPS real para verificar; queda como trabajo operativo separado, documentado aquí para que el dueño decida.
+
+- L-P4 (2026-11-10, PI-T4 aterriza): native fallback chains configuradas. Creado `profile-fallbacks.json` con cadenas por agente (reviewers, validators, judges, orchestrator, workers). PR-Agent `fallback_models` alineado con `nvidia/nemotron-3-super-120b-a12b`. El runtime nativo de gentle-pi 4.7 maneja el failover automático: al agotar cuota, error de auth o fallo de proveedor, el agente cambia al siguiente modelo en la cadena y continúa la conversación; cada cambio emite warning con nota de precio. `profile-fallbacks.json` listo para copiar a `~/.gentle-shell/config/gentle-ai/profile-fallbacks.json`.

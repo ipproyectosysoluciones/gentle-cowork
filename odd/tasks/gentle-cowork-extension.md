@@ -54,13 +54,13 @@ Multi-role orchestration extension for Pi/gentle-shell that respects ODD: delega
   - Verificar: suite 304 tests pasa, dogfood end-to-end funcional
   - ✅ Evidencia: suite `304 passed | 3 todo (307)`, typecheck clean, dogfood e2e EXIT 0 (4/4 contratos gc-1..gc-4 completados, master+worker coordinando vía blackboard, ~12s)
 
-- [ ] **PI-T2** [PI-2] Command guards nativos para comandos `/cowork-*`
+- [x] **PI-T2** [PI-2] Command guards nativos para comandos `/cowork-*`
   - Registrar comandos con native command guards
   - Políticas: permitir una vez / por sesión / siempre / denegar
   - Lo que borra datos (reset blackboard, etc.) nunca ofrece "siempre"
   - Verificar: typecheck + tests + carga real
 
-- [ ] **PI-T3** [PI-3] Exportar estado master/worker a Herdr state file
+- [x] **PI-T3** [PI-3] Exportar estado master/worker a Herdr state file
   - Archivo por sesión en `~/.herdr/sessions/<session-id>.json`
   - Estado: `working` | `blocked` | `idle` | `crashed`
   - Incluir: nodeId, role, contracts assigned, last heartbeat

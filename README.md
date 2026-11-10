@@ -74,7 +74,7 @@ mindmap
 
 ```mermaid
 flowchart TD
-    A[Pi / gentle-shell (ODD orchestrator)] --> B[gentle-cowork extension]
+    A[Pi \| gentle-shell (ODD orchestrator)] --> B[gentle-cowork extension]
     B --> C[tool_call hook detects delegation triggers]
     B --> D[TaskContract lightweight orchestration data]
     B --> E[subagent spawn (pi --mode rpc)]

@@ -19,24 +19,24 @@ Multi-role orchestration extension for [Pi](https://pi.dev) / [gentle-shell](htt
 mindmap
   root((gentle-cowork))
     Roles
-      🧠 cowork-planner
+      Planner
         read-only
         decompose + plan
-      🔨 cowork-implementer
+      Implementer
         scoped write
         execute one step
-      ✅ cowork-verifier
+      Verifier
         read + tests
         verdict per S#
     Workflow
       ODD classifies
       Delegate by named reason
-      Plan → Implement → Verify
+      Plan -> Implement -> Verify
       APPROVE or CHANGES
     Contracts
       TaskContract
-        id · objective · role
-        scope · criteria · specRef
+        id | objective | role
+        scope | criteria | specRef
       Spec by reference
         odd/tasks/<feature>.md
     Principles
@@ -74,13 +74,13 @@ mindmap
 
 ```mermaid
 flowchart TD
-    A["Pi / gentle-shell (ODD orchestrator)"] --> B["gentle-cowork extension"]
-    B --> C["tool_call hook\ndetects delegation triggers"]
-    B --> D["TaskContract\nlightweight orchestration data"]
-    B --> E["subagent spawn\n(pi --mode rpc)"]
-    E --> F["cowork-planner\n(read)"]
-    E --> G["cowork-implementer\n(scoped write)"]
-    E --> H["cowork-verifier\n(read + tests)"]
+    A[Pi / gentle-shell (ODD orchestrator)] --> B[gentle-cowork extension]
+    B --> C[tool_call hook detects delegation triggers]
+    B --> D[TaskContract lightweight orchestration data]
+    B --> E[subagent spawn (pi --mode rpc)]
+    E --> F[cowork-planner (read)]
+    E --> G[cowork-implementer (scoped write)]
+    E --> H[cowork-verifier (read + tests)]
 ```
 
 ---

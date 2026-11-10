@@ -6,6 +6,12 @@
  * structured APPROVE/CHANGES verdict per ODD spec requirement (S#).
  * The transport is injectable so the extension and its tests stay
  * decoupled from process spawning.
+ *
+ * NOTE: This implementation is purpose-built for ODD spec verification
+ * (S1, S2 requirements). It differs from the native gentle-shell
+ * review integration (gentle-pi 4.7+) which is designed for code review
+ * with lenses (review-risk, review-resilience, review-readability,
+ * review-reliability). See docs/verify-alignment.md for alignment analysis.
  */
 
 import {

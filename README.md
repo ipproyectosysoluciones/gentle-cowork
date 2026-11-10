@@ -1,74 +1,72 @@
-# gentle-cowork
+<!-- markdownlint-disable-next-line MD041 -->
+<a id="top"></a>
 
-An orchestration extension for [Pi](https://pi.dev) / gentle-shell that turns ODD-approved delegation into a structured, verified, multi-role workflow — without ever becoming a silent SDD.
+<div align="center">
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict,%20no%20any-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-24%20ESM-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Vitest](https://img.shields.io/badge/tested%20with-Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/)
-[![Pi](https://img.shields.io/badge/Pi-1.2.0%20extension-8A72FF?style=flat-square)](https://pi.dev)
-[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196?style=flat-square&logo=conventionalcommits&logoColor=white)](https://conventionalcommits.org)
-[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-contracts%20%2B%20release--please-2088FF?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/features/actions)
-[![Linear](https://img.shields.io/badge/Linear-issue%20tracking-5E6AD2?style=flat-square&logo=linear&logoColor=white)](https://linear.app)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+<img width="100%" alt="gentle-cowork banner: the neon rose glowing inside a black circle, the gentle-cowork wordmark, and the tagline Multi-role orchestration for Pi / gentle-shell" src="docs/assets/brand/gentle-cowork-banner.png" />
 
-## Mental Map
+<h1>gentle-cowork</h1>
 
-```mermaid
-mindmap
-  root((gentle-cowork))
-    Roles
-      🧠 cowork-planner
-        read-only
-        decompose + plan
-      🔨 cowork-implementer
-        scoped write
-        execute one step
-      ✅ cowork-verifier
-        read + tests
-        verdict per S#
-    Workflow
-      ODD classifies
-      Delegate by named reason
-      Plan → Implement → Verify
-      APPROVE or CHANGES
-    Contracts
-      TaskContract
-        id · objective · role
-        scope · criteria · specRef
-      Spec by reference
-        odd/tasks/<feature>.md
-    Principles
-      Never by size
-      Flat tree
-      Invisible to ODD
-      No SDD artifacts
-```
+<p><strong>Multi-role orchestration extension for <a href="https://pi.dev">Pi</a> / <a href="https://github.com/Gentleman-Programming/gentle-pi">gentle-shell</a> that turns ODD-approved delegation into a structured, verified, multi-role workflow — without ever becoming a silent SDD.</strong></p>
 
-## What it does
+<p>
+<a href="https://github.com/ipproyectosysoluciones/gentle-cowork/actions/workflows/validate-conventional-commits.yml"><img src="https://img.shields.io/badge/TypeScript-strict%2C%20no%20any-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript"></a>
+<a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-24%20ESM-339933?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js"></a>
+<a href="https://vitest.dev/"><img src="https://img.shields.io/badge/tested%20with-Vitest-6E9F18?style=for-the-badge&logo=vitest&logoColor=white" alt="Vitest"></a>
+<a href="https://pi.dev"><img src="https://img.shields.io/badge/Pi-1.2.0%20extension-8A72FF?style=for-the-badge&logo=pi&logoColor=white" alt="Pi"></a>
+<a href="https://conventionalcommits.org/"><img src="https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196?style=for-the-badge&logo=conventionalcommits&logoColor=white" alt="Conventional Commits"></a>
+<a href="https://github.com/features/actions"><img src="https://img.shields.io/badge/GitHub%20Actions-contracts%20%2B%20release--please-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="GitHub Actions"></a>
+<a href="https://linear.app"><img src="https://img.shields.io/badge/Linear-issue%20tracking-5E6AD2?style=for-the-badge&logo=linear&logoColor=white" alt="Linear"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+</p>
 
-`gentle-cowork` adds three specialized subagent roles on top of gentle-shell's existing delegation mechanism:
+<p>
+<a href="https://github.com/ipproyectosysoluciones/gentle-cowork"><strong>Repo</strong></a> &bull;
+<a href="ROADMAP.md"><strong>Roadmap</strong></a> &bull;
+<a href=".github/CONTRIBUTING.md"><strong>Contributing</strong></a> &bull;
+<a href="https://github.com/Gentleman-Programming/gentle-ai"><strong>Gentle-AI</strong></a>
+</p>
+
+<br/>
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="32" alt="" /></div>
+
+## The idea in one paragraph
+
+Assistants live in a browser tab you have to go find, forget you between chats, and stop at the edge of the page.
+**gentle-cowork adds three specialized subagent roles on top of gentle-shell's existing delegation mechanism — turning one delegation into a structured, verified Plan → Implement → Verify cycle, without ever becoming a silent SDD.**
+
+<br/>
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
+
+## The three roles
 
 | Role | Permission | Responsibility |
-|---|---|---|
-| `cowork-planner` | read-only | Decompose the objective into a plan with scope and acceptance criteria |
-| `cowork-implementer` | scoped write | Execute one plan step; produces an artifact summary |
-| `cowork-verifier` | read + tests | Validate changes per ODD spec requirement (S#); emit `APPROVE` or `CHANGES` verdict |
+|:---|:---|:---|
+| 🧠 **cowork-planner** | read-only | Decompose the objective into a plan with scope and acceptance criteria |
+| 🔨 **cowork-implementer** | scoped write | Execute one plan step; produces an artifact summary |
+| ✅ **cowork-verifier** | read + tests | Validate changes per ODD spec requirement (S#); emit `APPROVE` or `CHANGES` verdict |
 
-**The intelligence stays agent-side.** The bridge/extension only routes — every menu action or delegation sends a pre-crafted prompt to the assistant, which uses its native tools.
+**The intelligence stays agent-side.** The bridge/extension only routes — every delegation sends a pre-crafted prompt to the assistant, which uses its native tools.
 
-## Design principles (from the paper)
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
+
+## Design principles
 
 1. **Delegate by named reason, never by size.** Activated when ODD already determined that delegation has a valid reason (real parallelism, independent verification, context backstop) — never because a task "looks big".
-2. **Pass the spec by reference.** Subagents receive the path to the ODD feature document, never a paraphrased summary (per gentle-shell PR #1718).
+2. **Pass the spec by reference.** Subagents receive the path to the ODD feature document, never a paraphrased summary.
 3. **Lightweight task contract, not SDD artifacts.** Each delegation carries a `TaskContract` (`{ id, objective, role, scope, acceptanceCriteria, specRef, artifacts, status }`) — no formal proposal/spec/design documents.
-4. **Flat delegation tree.** Subagents never spawn sub-subagents.
-5. **Invisible to ODD.** The user describes what they need; the extension routes naturally. No `/cowork` invocation required for normal flows.
+3. **Flat delegation tree.** Subagents never spawn sub-subagents.
+4. **Invisible to ODD.** The user describes what they need; the extension routes naturally. No `/cowork` invocation required for normal flows.
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
 
 ## Architecture
 
 ```
 Pi / gentle-shell (ODD orchestrator)
-  └── gentle-cowork extension (this repo)
+  └── gentle-cowork extension
         ├── tool_call hook — detects delegation triggers
         ├── TaskContract — lightweight orchestration data
         └── subagent spawn (pi --mode rpc)
@@ -77,13 +75,27 @@ Pi / gentle-shell (ODD orchestrator)
               └── cowork-verifier (read + tests)
 ```
 
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
+
+## Pipeline — nothing merges unless GREEN
+
+| Check | Workflow | Purpose |
+|:---|:---|:---|
+| `validate-conventional-commits / validate` | `validate-conventional-commits.yml` | Conventional Commits contract |
+| `CodeQL / analyze` | `codeql.yml` | Security scanning (the Actions job, not the stale code-scanning context) |
+| `PR Agent (NVIDIA Nemotron) / pr_agent_job` | `pr-agent-nvidia.yml` | Runs typecheck + tests + Nemotron-3-Ultra review |
+
+**All three must be GREEN.** `enforce_admins: false` — you keep the admin merge bypass; agents cannot bypass. Ruleset requires conversation resolution.
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
+
 ## Prerequisites
 
-- **Node.js ≥ 24** (the project is pure ESM)
+- **Node.js ≥ 24** (pure ESM)
 - **pnpm** (or npm) as package manager
-- **Pi / gentle-shell ≥ 1.2.0** — this is an extension for that harness, not a standalone tool
+- **Pi / gentle-shell ≥ 1.2.0** — this is an extension, not a standalone tool
 - **Git**
-- For multi-node (Phase 5): two or more Pi sessions on the same machine. Remote workers over the network (SSH/Docker VPS, TLS/mTLS) are the next slice (T5.9) — not available yet.
+- For multi-node (Phase 5): two or more Pi sessions on the same machine
 
 ## Installation
 
@@ -95,13 +107,13 @@ pnpm install          # or: npm install
 
 # 2. Sanity check — both gates must be green
 npx tsc --noEmit      # strict TypeScript, zero errors
-npx vitest run        # full suite
+npx vitest run        # 304 tests pass
 
 # 3. Load it into your Pi session
 pi -e ./src/gentle-cowork.ts
 ```
 
-Or install it permanently in your agent extensions folder:
+Or install permanently in your agent extensions folder:
 
 ```bash
 cp src/gentle-cowork.ts ~/.pi/agent/extensions/gentle-cowork.ts
@@ -125,15 +137,19 @@ npm run worker:remote -- --host <vps-host> --user <vps-user> \
   --env OPENAI_API_KEY=... --expected-node <worker-node-id>
 ```
 
-The launcher provisions the VPS (installs Docker, writes `/etc/gentle-cowork/worker.env` with mode 0600, starts the worker container with `--restart unless-stopped`), opens the SSH reverse tunnel to the master's WS port, and verifies the worker's registration on the blackboard. Teardown: append `--teardown`. Model credentials travel only through the env file — never through chat, never baked into the image.
+The launcher provisions the VPS (installs Docker, writes `/etc/gentle-cowork/worker.env` with mode 0600, starts the worker container with `--restart unless-stopped`), opens the SSH reverse tunnel to the master's WS port, and verifies the worker's registration on the blackboard.
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
 
 ## Notes (read before using)
 
 - **Not a standalone binary.** The extension only routes; the intelligence stays in your Pi/gentle-shell session. Without the host agent it does nothing.
-- **Multi-node maturity (Phase 5).** The local stage is complete: sessions on the same machine coordinate through `.gentle-cowork/blackboard.json` with file locking, leases with monotonic fencing tokens, and version-counter conflict merge. The WebSocket transport (port `4318`, configurable, bound to `127.0.0.1`) is a skeleton for the upcoming remote slice — **TLS/mTLS is not implemented yet; do not expose the port publicly**.
+- **Multi-node maturity (Phase 5).** The local stage is complete: sessions on the same machine coordinate through `.gentle-cowork/blackboard.json` with file locking, leases with cryptographic fencing tokens, and version-counter conflict merge. The WebSocket transport (port `4318`, configurable, bound to `127.0.0.1`) is a skeleton for the upcoming remote slice — **TLS/mTLS is not implemented yet; do not expose the port publicly**.
 - **Verifier authority.** The `cowork-verifier` role only ever runs on the master session — workers never verify, they execute.
 - **Workers are subprocesses.** A worker is a `pi --mode rpc` child process that inherits the model configuration of the session that spawned it.
 - **Quality gates.** Strict TypeScript (`no any`), full suite and typecheck green before every PR — the same contract the extension enforces on the agents it orchestrates.
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
 
 ## Contributing
 
@@ -147,13 +163,44 @@ Contributions follow the gentle-ecosystem contracts — the full rules live in [
 
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0/). Versions are automated by [release-please](https://github.com/googleapis/release-please) from Conventional Commits: `feat` → minor, `fix` → patch, breaking changes (`!` / `BREAKING CHANGE:` footer) → major, and `docs`/`chore` never trigger a release. Human-readable history lives in [`CHANGELOG.md`](CHANGELOG.md).
 
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
+
 ## License
 
 Released under the [MIT License](LICENSE) — Copyright © 2026 Bladimir Parra.
 
 > Credits: the WebSocket framing pattern of the multi-node transport reuses the daemon protocol from **dot-telegram**, created by **Daniel**. Thank you for the solid foundation.
 
+<div align="center">
 <a href="https://github.com/Gentleman-Programming/gentle-ai">
-  <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+  <img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
 </a>
-# trigger
+</div>
+
+---
+
+<div align="center">
+
+<a href="https://github.com/ipproyectosysoluciones/gentle-cowork"><img src="https://img.shields.io/badge/Repo-Visit-8A72FF?style=for-the-badge&logo=github&logoColor=white" alt="Repo"></a>
+<a href="ROADMAP.md"><img src="https://img.shields.io/badge/Roadmap-View-FE5196?style=for-the-badge&logo=roadmap&logoColor=white" alt="Roadmap"></a>
+<a href=".github/CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contributing-Guide-FE5196?style=for-the-badge&logo=github&logoColor=white" alt="Contributing"></a>
+
+<br/><br/>
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
+
+<p><em>Built with <a href="https://github.com/Gentleman-Programming/gentle-ai">Gentle-AI</a> — on top of <a href="https://github.com/Gentleman-Programming/gentle-pi">Gentle Shell</a></em></p>
+
+<a href="https://gentlemanprogramming.com/"><img src="https://img.shields.io/badge/Website-F095C8?style=for-the-badge&labelColor=1A1218&logo=googlechrome&logoColor=F095C8" alt="Website"></a>
+<a href="https://www.youtube.com/@GentlemanProgramming"><img src="https://img.shields.io/badge/YouTube-F095C8?style=for-the-badge&labelColor=1A1218&logo=youtube&logoColor=F095C8" alt="YouTube"></a>
+<a href="https://github.com/Gentleman-Programming"><img src="https://img.shields.io/badge/GitHub-D7A0B8?style=for-the-badge&labelColor=1A1218&logo=github&logoColor=D7A0B8" alt="GitHub"></a>
+
+</div>
+
+---
+
+<div align="center">
+
+<div align="center"><img src="docs/assets/brand/rose.svg" width="28" alt="" /></div>
+
+</div>

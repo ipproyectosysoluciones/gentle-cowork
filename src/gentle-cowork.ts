@@ -251,6 +251,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
       "Phase 1: spawn a cowork-verifier subagent (pi --mode rpc) with a test prompt and log its verdict",
     handler: async (_args: string, ctx) => {
       console.error(`[gentle-cowork] VERIFY_COMMAND handler STARTED`);
+      const contractId = `vc-${++verifyCounter}`;
       notify(
         ctx,
         `${PREFIX} Spawning cowork-verifier via pi --mode rpc (Phase 1 test, ${PHASE1_TEST_REQUIREMENTS.length} requirements)...`,

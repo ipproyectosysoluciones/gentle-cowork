@@ -17,58 +17,102 @@
 - Result artifacts: `gentle-ai.review-result-artifact/v2` with lenses
 - Native refuter/validator roles via provider role capture
 
-## Fundamental Differences
+## ODD S1/S2 Mapping to Native Lenses
 
-| Aspect | gentle-cowork Verifier | Native Review Integration |
-|--------|------------------------|---------------------------|
-| Purpose | ODD spec verification (S1, S2) | Code review with lenses |
-| Output | Custom `VerifyVerdict` (APPROVE/CHANGES) | `review-result-artifact/v2` with lenses |
-| Lenses | N/A (S1, S2 requirements) | review-risk, review-resilience, review-readability, review-reliability |
-| Transport | Custom `SubagentRpc` + `runSubagentTurn` | Native `review.start`, `review.status`, `review.finalize` |
-| Roles | Custom `cowork-verifier` subagent | Native refuter/validator via provider role capture |
-| Transport | Custom `SubagentRpc` + `pi --mode rpc` | Native `review.start`, `review.status`, `review.finalize` |
+| ODD Requirement | Description | Native Lens Mapping | Rationale |
+|-----------------|-------------|---------------------|-----------|
+| **S1** | `TaskContract` exports `specRef: string` | `review-readability` + `review-reliability` | Type export verification ensures code readability and type reliability |
+| **S2** | `CoworkRole` exports exactly 'planner', 'implementer', 'verifier' | `review-reliability` + `review-readability` | Enum completeness and type safety ensure reliability and readability |
 
-## Alignment Assessment
+## ODD S1/S2 → Native Lens Mapping
 
-**Fundamental Mismatch**: The current implementation is purpose-built for **ODD spec verification** (S1, S2 requirements about type exports), while the native review integration is designed for **code review with lenses** (review-risk, review-resilience, etc.).
+| ODD Requirement | Native Lens | Verification Criteria |
+|-----------------|-------------|----------------------|
+| **S1**: `TaskContract.specRef: string` | `review-readability` (primary) + `review-reliability` (secondary) | Field exists, correct type, documented |
+| **S2** `CoworkRole` enum values | `review-reliability` (primary) + `review-readability` (secondary) | Enum has exactly 3 values, no more no less |
 
-**Key Differences**:
-1. **Purpose**: ODD spec verification vs. code review with lenses
-2. **Output Format**: Custom `VerifyVerdict` vs `review-result-artifact/v2` with lenses
-3. **Transport**: Custom `SubagentRpc` vs native `review.start`/`review.status`/`review.finalize`
-4. **Roles**: Custom `cowork-verifier` vs native refuter/validator via provider role capture
-5. **Lenses**: S1/S2 requirements vs review-risk/review-resilience/review-readability/review-reliability
+## Proposed Native Review Flow
 
-## Alignment Decision
+```typescript
+// New native verify flow using review.start/finalize
+async function runNativeVerify(request: NativeVerifyRequest): Promise<ReviewResult> {
+  // 1. Start review with appropriate lenses
+  const review = await review.start({
+    targetIdentity: "gentle-cowork-types",
+    lenses: ["review-readability", "review-reliability"],
+    artifactSubject: {
+      schema: "gentle-ai.review-artifact-subject/v2",
+      subjectHash: <hash-of-src-types-ts>,
+      lineageId: "verify-phase1",
+      authorityRevision: <current-commit>,
+      targetIdentity: <workspace-hash>,
+      baseTree: <base-commit>,
+      candidateTree: <head-commit>,
+      changedPathManifestSha256: <hash>,
+      lens: "review-readability", // primary for S1
+      selectedOrder: 0,
+      correctionTargetIdentity: <target>
+    }
+  });
 
-**Current Decision**: Keep current implementation working. The use cases are fundamentally different:
-- gentle-cowork verifier: ODD spec verification (S1, S2)
-- Native review integration: Code review with lenses
+  // 2. Execute verification (read-only analysis of src/types.ts)
+  const evidence = await runTypeVerification(); // S1 + S2 checks
 
-**Future Alignment Consideration**: If the use cases converge (e.g., if ODD spec verification needs to produce review artifacts), consider:
-1. Mapping `VerifyVerdict` to `review-result-artifact/v2` format
-2. Using native `review.start`/`review.finalize` operations
-2. Mapping S1/S2 requirements to appropriate lenses
+  // 3. Finalize with evidence
+  const result = await review.finalize({
+    lineageId: review.lineageId,
+    revision: <current-revision>,
+    targetIdentity: <target>,
+    resultArtifacts: [{
+      schema: "gentle-ai.review-result-artifact/v2",
+      capability: "review.native_result_artifact",
+      path: <evidence-path>,
+      sha256: <evidence-hash>,
+      lineageId: "verify-phase1",
+      targetIdentity: <target>,
+      lens: "review-readability",
+      selectedOrder: 0
+    }]
+  });
 
-## TODO for Future Alignment
+  return result;
+}
+```
 
-- [ ] Evaluate if ODD spec verification can map to review lenses
-- [ ] Investigate if `review.start`/`review.finalize` can replace custom subagent flow
-- [ ] Map `VerifyRequirement` (S1, S2) to appropriate lenses
-- [ ] Evaluate if native `review.start`/`review.finalize` can replace custom `runVerifier`
-- [ ] Consider implementing `review-verification-evidence/v2` for evidence tracking
+## ODD S1/S2 → Native Lens Mapping Summary
 
-## Current Status
+| ODD Spec | Requirement | Native Lens | Verification Artifact |
+|------------|-------------|-------------|----------------------|
+| **S1** | `TaskContract.specRef: string` | `review-readability` (primary) | Type existence + type correctness |
+| | | `review-reliability` (secondary) | Type safety, no `any` |
+| **S2** | `CoworkRole` enum = exactly 3 values | `review-reliability` (primary) | Enum completeness + exhaustiveness |
+| | | `review-readability` (secondary) | Clear naming, documentation |
 
-✅ **Current Implementation**: Working, tested (304 tests passing), TypeScript clean
-- `runVerifier` with custom `SubagentRpc` and `runSubagentTurn`
-- Custom `VerifyVerdict` parsing with `APPROVE`/`CHANGES` outcome
-- Tests passing (304 passed | 3 todo)
+## Implementation Plan
 
-## Recommendation
+### Phase 1: Mapping Complete ✅
+- [x] Document ODD S1/S2 → native lens mapping
 
-**Keep current implementation working**. The use cases are fundamentally different:
-- gentle-cowork: ODD spec verification (S1, S2)
-- Native review: Code review with lenses
+### Phase 2: Refactor `src/verifier.ts`
+- [ ] Replace `runVerifier` with native `review.start`/`review.finalize`
+- [ ] Map `VerifyVerdict` → `review-result-artifact/v2`
+- [ ] Use native lenses: `review-readability`, `review-reliability`
+- [ ] Remove custom `runSubagentTurn` + `SubagentRpc` dependency
 
-**Future**: Re-evaluate if ODD spec verification needs to produce review artifacts or if native review integration can be extended for spec verification.
+### Phase 3: Tests
+- [ ] Update tests to use native review flow
+- [ ] Verify 304 tests pass + typecheck clean
+
+### Phase 4: Live Testing
+- [ ] Test `/cowork-verify` with native review flow
+
+---
+
+## References
+
+- Native Review Integration: `gentle-pi` contracts `review-integration/v2`
+- Result Artifact: `gentle-ai.review-result-artifact/v2`
+- Lenses: `review-risk`, `review-resilience`, `review-readability`, `review-reliability`
+- Operations: `review.start`, `review.status`, `review.finalize`, `review.validate`, `review.repair`
+- Artifact Subject: `gentle-ai.review-artifact-subject/v2`
+- Result Artifact: `gentle-ai.review-result-artifact/v2`

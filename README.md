@@ -13,6 +13,48 @@ Multi-role orchestration extension for [Pi](https://pi.dev) / [gentle-shell](htt
 
 ---
 
+## About
+
+**gentle-cowork** is the multi-node orchestration extension for the **gentle-pi / gentle-shell** ecosystem. It turns Organic Driven Development (ODD) delegation decisions into a structured, verified, multi-role workflow — without ever becoming a silent spec-driven development (SDD) framework.
+
+### Why this exists
+
+Most AI coding agents delegate by size or complexity. **gentle-cowork delegates by named reason only** — when ODD has already determined that:
+- Real parallelism exists (independent units of work)
+- Independent verification is required (high-risk changes)
+- Context backstop was hit (~150k tokens)
+
+The extension provides three specialized roles that operate on a shared **blackboard** with file locking, cryptographic lease fencing, and version-counter conflict resolution:
+
+| Role | Permission | Responsibility |
+|---|---|---|
+| 🧠 **cowork-planner** | read-only | Decompose objective into plan with scope + acceptance criteria |
+| 🔨 **cowork-implementer** | scoped write | Execute one plan step; produce artifact summary |
+| ✅ **cowork-verifier** | read + tests | Validate per ODD spec requirement (S#) via native gentle-shell review (`review.start`/`review.finalize`, lenses `review-readability` + `review-reliability`); emit `APPROVE` or `CHANGES` |
+
+### What makes it different
+
+- **Never by size** — Delegation triggers only on named reasons (real parallelism, independent verification, context backstop)
+- **Spec by reference** — Subagents receive the path to the ODD feature document, never a paraphrased summary
+- **Lightweight contracts** — Each delegation carries a `TaskContract` (id, objective, role, scope, acceptanceCriteria, specRef) — no formal proposal/spec/design documents
+- **Flat tree** — Subagents never spawn sub-subagents
+- **Invisible to ODD** — User describes what they need; extension routes naturally; no `/cowork` invocation required
+- **Native integration** — Uses gentle-pi 4.7 primitives (background jobs, fallback chains, command guards, Herdr state, TUI riel, WS transport, crypto) instead of reimplementing infrastructure
+
+### Status
+
+| Phase | Status | Description |
+|---|---|---|
+| **Phase 0** | ✅ | Project skeleton, TaskContract, role definitions |
+| **Phase 1** | ✅ | Verifier spawn via `pi --mode rpc` |
+| **Phase 2** | ✅ | Full orchestration chain + **Native Review Integration** (review.start/finalize, lenses review-readability + review-reliability) |
+| **Phase 3** | ✅ | Invisible delegation via tool_call hook |
+| **Phase 4** | ✅ | Blackboard state persistence (pending → in_progress → completed/failed) |
+| **Phase 5** | 🏗️ | Multi-node (remote workers via SSH tunnels, WS transport) |
+| **Phase 6-8** | 📋 | Enterprise roadmap (business layer, architectural memory, smart profiles) |
+
+---
+
 ## Mental Map
 
 ```mermaid

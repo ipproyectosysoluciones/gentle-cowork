@@ -5,7 +5,7 @@ name: validate-conventional-commits
 # Merge commits are excluded: they carry the PR subject, not content commits.
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, tracker/**, chained/**]
 
 jobs:
   validate:

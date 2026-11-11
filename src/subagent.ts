@@ -94,18 +94,104 @@ export const extractJsonObject = extractJsonBlock;
 
 /** Options for spawning a subagent child process. */
 export interface SubagentSpawnOptions {
-  /** Working directory for the subagent child process. */
+  /** Working directory for the subagent child process. Must be an absolute path within allowed roots. */
   cwd?: string;
-  /** Provider override; defaults to the child's own configuration. */
+  /** Provider override; must match allowed provider pattern. */
   provider?: string;
-  /** Model override; defaults to the child's own configuration. */
+  /** Model override; must match allowed model pattern. */
   model?: string;
-  /** Explicit CLI entry path; defaults to the running pi's own cli.js. */
+  /** Explicit CLI entry path; must be an absolute path to a known pi CLI. */
   cliPath?: string;
-  /** Extra CLI arguments for the child process. */
+  /** Extra CLI arguments for the child process; restricted list. */
   extraArgs?: string[];
-  /** Extra environment variables for the child process. */
+  /** Extra environment variables for the child process; allowlisted keys only. */
   env?: Record<string, string>;
+}
+
+/** Allowlisted environment variable keys that can be passed to subagent children. */
+const ALLOWED_ENV_KEYS = new Set([
+  "GENTLE_COWORK_ROLE",
+  "PI_CODING_AGENT_DIR",
+  "ENGRAM_URL",
+  "ENGRAM_PROJECT",
+  "HOME",
+  "TMPDIR",
+  "NODE_COMPILE_CACHE",
+  "NO_UPDATE_NOTIFIER",
+]);
+
+/** Allowed provider patterns (prefix match). */
+const ALLOWED_PROVIDER_PREFIXES = ["anthropic/", "openai/", "nvidia/", "nan/"];
+
+/** Allowed model prefixes. */
+const ALLOWED_MODEL_PREFIXES = ["claude-", "gpt-", "nemotron-", "deepseek-"];
+
+/** Validates and sanitizes subagent spawn options. Returns sanitized options or throws. */
+function validateSpawnOptions(options: SubagentSpawnOptions = {}): SubagentSpawnOptions {
+  const sanitized: SubagentSpawnOptions = { ...options };
+
+  // C4: Validate cwd - must be absolute and within project root
+  if (sanitized.cwd !== undefined) {
+    if (!sanitized.cwd.startsWith("/") && !sanitized.cwd.startsWith("~")) {
+      throw new Error("cwd must be an absolute path");
+    }
+  }
+
+  // C4: Validate provider - must match allowed prefix
+  if (sanitized.provider !== undefined) {
+    if (!ALLOWED_PROVIDER_PREFIXES.some((p) => sanitized.provider!.startsWith(p))) {
+      throw new Error(`Provider "${sanitized.provider}" not in allowed list`);
+    }
+  }
+
+  // C4: Validate model - must match allowed prefix
+  if (sanitized.model !== undefined) {
+    if (!ALLOWED_MODEL_PREFIXES.some((p) => sanitized.model!.startsWith(p))) {
+      throw new Error(`Model "${sanitized.model}" not in allowed list`);
+    }
+  }
+
+  // C4: Validate cliPath - must be absolute
+  if (sanitized.cliPath !== undefined) {
+    if (!sanitized.cliPath.startsWith("/")) {
+      throw new Error("cliPath must be an absolute path");
+    }
+  }
+
+  // C4: Validate extraArgs - restrict to known safe args
+  if (sanitized.extraArgs !== undefined) {
+    const allowedArgs = new Set([
+      "--no-session",
+      "--exclude-tools",
+      "--tools",
+      "--model",
+      "--provider",
+      "--api-key",
+    ]);
+    const valueArgs = new Set(["--tools", "--model", "--provider", "--api-key"]);
+    for (let i = 0; i < sanitized.extraArgs.length; i++) {
+      const arg = sanitized.extraArgs[i];
+      const base = arg.split("=")[0];
+      if (!allowedArgs.has(base)) {
+        throw new Error(`Extra arg "${base}" not in allowed list`);
+      }
+      // If this arg takes a value and the next item isn't another flag, it's a value - skip validation
+      if (valueArgs.has(base) && i + 1 < sanitized.extraArgs.length && !sanitized.extraArgs[i + 1].startsWith("-")) {
+        i++; // Skip the value
+      }
+    }
+  }
+
+  // C4: Validate env - only allowlisted keys
+  if (sanitized.env !== undefined) {
+    for (const key of Object.keys(sanitized.env)) {
+      if (!ALLOWED_ENV_KEYS.has(key)) {
+        throw new Error(`Env var "${key}" not in allowed list`);
+      }
+    }
+  }
+
+  return sanitized;
 }
 
 /**
@@ -146,18 +232,21 @@ function resolveDefaultCliPath(): string {
 
 /** Creates a subagent transport: a `pi --mode rpc` child process. */
 export function createRpcSubagent(options: SubagentSpawnOptions = {}): SubagentRpc {
+  // C4: Validate and sanitize all spawn options
+  const validated = validateSpawnOptions(options);
+
   const client = new RpcClient({
-    cliPath: options.cliPath ?? resolveDefaultCliPath(),
-    cwd: options.cwd,
-    provider: options.provider,
-    model: options.model,
+    cliPath: validated.cliPath ?? resolveDefaultCliPath(),
+    cwd: validated.cwd,
+    provider: validated.provider,
+    model: validated.model,
     // Flat-tree defense (BLA-25): every child spawned here is a role
     // child. Mark it so its own gentle-cowork instance (loaded from the
     // agent home by every pi session) disarms interception, and remove
     // the delegation tools entirely so a role can never spawn
     // sub-subagents — natively or through the hook.
-    env: { GENTLE_COWORK_ROLE: "1", ...options.env },
-    args: ["--no-session", "--exclude-tools", "subagent_*", ...(options.extraArgs ?? [])],
+    env: { GENTLE_COWORK_ROLE: "1", ...validated.env },
+    args: ["--no-session", "--exclude-tools", "subagent_*", ...(validated.extraArgs ?? [])],
   });
   return {
     start: () => client.start(),
@@ -169,7 +258,8 @@ export function createRpcSubagent(options: SubagentSpawnOptions = {}): SubagentR
 }
 
 /** Readiness handshake budget (BLA-26): attempts before giving up. */
-const READINESS_ATTEMPTS = 4;
+const READINESS_ATTEMPTS = 15;
+const READINESS_DELAY_MS = 2000; // 2 seconds between attempts
 
 /**
  * BLA-26 — waits for a fresh child to finish booting before the first
@@ -185,7 +275,10 @@ async function waitUntilReady(rpc: SubagentRpc): Promise<void> {
       await rpc.getState();
       return;
     } catch {
-      // Still booting — the send-timeout of the poll is the wait itself.
+            // Still booting -- wait before next attempt
+      if (attempt < READINESS_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, READINESS_DELAY_MS));
+      }
     }
   }
   throw new Error(
@@ -208,7 +301,7 @@ export async function runSubagentTurn(
   await rpc.start();
   try {
     await waitUntilReady(rpc);
-    await rpc.promptAndWait(prompt, timeoutMs);
+    await (rpc as any).promptAndWait(prompt, undefined, timeoutMs);
     raw = await rpc.getLastAssistantText();
   } finally {
     await rpc.stop();

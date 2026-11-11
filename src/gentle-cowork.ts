@@ -36,19 +36,20 @@ const STATUS_COMMAND = "cowork";
 const CONTRACT_COMMAND = "cowork-contract";
 const VERIFY_COMMAND = "cowork-verify";
 const CHAIN_COMMAND = "cowork-chain";
+const DOGFOOD_COMMAND = "cowork-dogfood";
 
 /** ODD spec document this feature work is tracked against. */
 const SPEC_REF = "odd/tasks/gentle-cowork-extension.md";
 
 /** Overall timeout for one verifier spawn, in milliseconds. */
-const VERIFY_TIMEOUT_MS = 120_000;
+const VERIFY_TIMEOUT_MS = 300_000;
 
 /**
  * Overall timeout for one chain role turn, in milliseconds. Measured real
  * cowork-implementer turn: ~339s (full spec read + scoped write + artifact
  * JSON) — probe 2026-10-16; keep a comfortable margin above it.
  */
-const CHAIN_TIMEOUT_MS = 600_000;
+const CHAIN_TIMEOUT_MS = 900_000;
 
 /** Maximum implementer attempts per step after CHANGES verdicts (ROADMAP). */
 const MAX_CHAIN_RETRIES = 3;
@@ -111,7 +112,9 @@ function buildContract(
   scope: string[],
   criteria: string[],
   specRef: string,
+  leaseFence?: number,
 ): TaskContract {
+  const now = new Date().toISOString();
   return {
     id,
     objective,
@@ -121,6 +124,16 @@ function buildContract(
     specRef,
     artifacts: [],
     status: "pending",
+    version: 1,
+    history: [{
+      status: "pending",
+      version: 1,
+      nodeId: "extension",
+      timestamp: now,
+      leaseFence,
+    }],
+    leaseFence,
+    retryCount: 0,
   };
 }
 
@@ -237,6 +250,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
     description:
       "Phase 1: spawn a cowork-verifier subagent (pi --mode rpc) with a test prompt and log its verdict",
     handler: async (_args: string, ctx) => {
+      console.error(`[gentle-cowork] VERIFY_COMMAND handler STARTED`);
       const contractId = `vc-${++verifyCounter}`;
       notify(
         ctx,
@@ -285,6 +299,7 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
   pi.registerCommand(CHAIN_COMMAND, {
     description: "Phase 2: run the full planner → implementer → verifier chain with a test objective",
     handler: async (_args: string, ctx) => {
+      console.error(`[gentle-cowork] CHAIN_COMMAND handler STARTED`);
       const contractId = `ch-${++chainCounter}`;
       // Phase 4 — persist the chain contract as in_progress from the moment
       // the chain starts, so an interrupted run leaves a resumable record.
@@ -354,6 +369,44 @@ export default function gentleCoworkExtension(pi: ExtensionAPI, deps: CoworkDeps
         persistContract(ctx.cwd, failedContract);
         notify(ctx, `${PREFIX} Chain failed: ${message}`, "error");
       }
+    },
+  });
+
+  pi.registerCommand(DOGFOOD_COMMAND, {
+    description: "Phase 5: run dogfooding natively via Pi background jobs (bash_background)",
+    handler: async (args: string, ctx) => {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const subcommand = parts[0] || "run";
+      const timeoutIdx = parts.indexOf("--timeout");
+      const timeoutSeconds = timeoutIdx >= 0 && parts[timeoutIdx + 1] ? parseInt(parts[timeoutIdx + 1], 10) : 300;
+
+      if (subcommand === "help" || subcommand === "--help") {
+        notify(ctx, `${PREFIX} Dogfood native usage: /cowork-dogfood <run|master|worker> [--timeout SECONDS]`);
+        notify(ctx, `  run      - runs master + worker via Pi bash_background (default 300s)`);
+        notify(ctx, `  master   - runs master only (requires --shared-dir PATH)`);
+        notify(ctx, `  worker   - runs worker only (requires --shared-dir PATH)`);
+        return;
+      }
+
+      const sharedDirIdx = parts.indexOf("--shared-dir");
+      const sharedDir = sharedDirIdx >= 0 && parts[sharedDirIdx + 1] ? parts[sharedDirIdx + 1] : undefined;
+
+      const script = subcommand === "master" || subcommand === "worker"
+        ? `scripts/dogfood-${subcommand}.ts`
+        : "scripts/dogfood-native.ts run";
+
+      const timeoutSecondsClamped = Math.min(timeoutSeconds, 1800);
+      const label = `dogfood-${subcommand}`;
+      const cwd = ctx.cwd;
+
+      notify(ctx, `${PREFIX} Starting dogfood native via Pi background job: ${label} (timeout: ${timeoutSecondsClamped}s)`);
+
+      const sharedDirPath = sharedDir || "/tmp/gentle-cowork-dogfood";
+      const command = `cd ${cwd} && DOG_FOOD_SHARED_DIR="${sharedDirPath || "/tmp/gentle-cowork-dogfood"}" npx tsx ${script} --timeout ${timeoutSecondsClamped}`;
+
+      notify(ctx, `${PREFIX} Starting dogfood via Pi background job: ${label} (timeout: ${timeoutSecondsClamped}s)`);
+      notify(ctx, `${PREFIX} Run this command in Pi to start the background job:`);
+      notify(ctx, `  pi --mode rpc --no-session -p '{"tool":"bash_background","args":{"command":"${command.replace(/"/g, '\\"')}", "label": "dogfood-${subcommand}", "cwd": "${ctx.cwd}"}}'`);
     },
   });
 

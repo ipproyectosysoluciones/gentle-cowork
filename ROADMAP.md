@@ -29,14 +29,15 @@ flowchart LR
 
 **Exit criteria:** A verifier subagent runs, reads a test file, and returns a structured verdict.
 
-## Phase 2 — Planner → Implementer → Verifier chain
+## Phase 2 — Planner → Implementer → Verifier chain (with native gentle-shell review integration)
 
 - [x] `cowork-planner` receives an objective, returns a plan (list of steps with scope + criteria)
 - [x] `cowork-implementer` receives one step, executes it, returns an artifact summary
 - [x] `cowork-verifier` receives the artifact, runs tests, returns a per-S# verdict
 - [x] If verdict is `CHANGES`, loop back to implementer (max 3 retries)
+- [x] **Native review integration**: `runNativeVerify` uses `gentle-shell` native `review.start`/`review.finalize` with lenses `review-readability` + `review-reliability` for ODD S1/S2 verification (see [docs/verify-alignment.md](docs/verify-alignment.md))
 
-**Exit criteria:** A complete plan → implement → verify cycle runs without manual intervention.
+**Exit criteria:** A complete plan → implement → verify cycle runs without manual intervention; native review integration verified (307 tests pass, typecheck clean).
 
 ## Phase 3 — ODD integration (invisible delegation)
 

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gentle Cowork Blackboard Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "JetBrains Mono", "Fira Code", "Monospace";
+    font-size: 12px;
+    line-height: 1.4;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    width: 180ch;
+    height: 50ch;
+    padding: 0;
+    overflow: hidden;
+  }
+  .dashboard { width: 100%; height: 100%; display: grid; grid-template-rows: 1fr 3fr 1fr; grid-template-columns: 2fr 1fr 1fr; gap: 1px; background: #313244; padding: 1px; }
+  
+  /* Header */
+  .header { grid-column: 1 / -1; grid-row: 1; background: #181825; border-bottom: 1px solid #45475a; padding: 0 2ch; display: flex; align-items: center; justify-content: space-between; }
+  .title { font-weight: 700; color: #f9e2af; font-size: 14px; }
+  .subtitle { color: #6c7086; font-size: 11px; }
+  .status-indicators { display: flex; gap: 3ch; align-items: center; }
+  .indicator { display: flex; align-items: center; gap: 0.5ch; font-size: 11px; }
+  .dot { width: 0.6ch; height: 0.6ch; border-radius: 50%; }
+  .dot.running { background: #a6e3a1; }
+  .dot.warning { background: #f9e2af; }
+  .dot.error { background: #f38ba8; }
+  .dot.idle { background: #6c7086; }
+  .clock { color: #fab387; font-variant-numeric: tabular-nums; }
+
+  /* Contracts Panel */
+  .contracts { grid-column: 1; grid-row: 2; background: #1e1e2e; border-right: 1px solid #45475a; padding: 1ch; overflow-y: auto; }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 0.5ch; border-bottom: 1px solid #45475a; margin-bottom: 1ch; }
+  .panel-title { font-weight: 700; color: #f9e2af; font-size: 12px; }
+  .panel-count { color: #6c7086; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .contract-list { display: flex; flex-direction: column; gap: 0.5ch; }
+  .contract-item { background: #313244; border: 1px solid #45475a; border-radius: 4px; padding: 0.75ch 1ch; transition: border-color 0.15s; }
+  .contract-item:hover { border-color: #89b4fa; }
+  .contract-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5ch; }
+  .contract-id { font-weight: 600; color: #cdd6f4; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .contract-status { font-size: 10px; padding: 0.1ch 0.5ch; border-radius: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .status-pending { background: #45475a; color: #f9e2af; }
+  .status-in_progress { background: #1e66f5; color: #cdd6f4; }
+  .status-completed { background: #a6e3a1; color: #181825; }
+  .status-failed { background: #f38ba8; color: #181825; }
+  .contract-meta { display: flex; gap: 2ch; font-size: 10px; color: #6c7086; margin-top: 0.25ch; }
+  .meta-item { display: flex; align-items: center; gap: 0.5ch; }
+  .meta-label { color: #6c7086; }
+  .meta-value { color: #cdd6f4; font-weight: 500; }
+  .contract-objective { font-size: 11px; color: #9399b2; margin-top: 0.5ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+  /* Leases Panel */
+  .leases { grid-column: 2; grid-row: 2; background: #1e1e2e; border-right: 1px solid #45475a; padding: 1ch; overflow-y: auto; }
+  .lease-item { background: #313244; border: 1px solid #45475a; border-radius: 4px; padding: 0.75ch 1ch; margin-bottom: 0.5ch; }
+  .lease-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5ch; }
+  .lease-holder { font-weight: 600; color: #cdd6f4; font-size: 11px; }
+  .lease-fence { background: #45475a; color: #fab387; font-size: 10px; padding: 0.1ch 0.5ch; border-radius: 3px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .lease-meta { display: flex; flex-direction: column; gap: 0.25ch; font-size: 10px; color: #6c7086; }
+  .lease-meta-row { display: flex; align-items: center; gap: 0.5ch; }
+  .lease-meta-label { color: #6c7086; min-width: 8ch; }
+  .lease-meta-value { color: #cdd6f4; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .lease-progress { height: 0.4ch; background: #45475a; border-radius: 2px; overflow: hidden; margin-top: 0.5ch; }
+  .lease-progress-bar { height: 100%; background: linear-gradient(90deg, #a6e3a1, #f9e2af); transition: width 0.3s; }
+
+  /* Fences Panel */
+  .fences { grid-column: 3; grid-row: 2; background: #1e1e2e; padding: 1ch; overflow-y: auto; }
+  .fence-item { background: #313244; border: 1px solid #45475a; border-radius: 4px; padding: 0.75ch 1ch; margin-bottom: 0.5ch; }
+  .fence-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5ch; }
+  .fence-contract { font-weight: 600; color: #cdd6f4; font-size: 11px; }
+  .fence-value { font-family: inherit; font-size: 10px; background: #45475a; color: #fab387; padding: 0.1ch 0.5ch; border-radius: 3px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .fence-meta { font-size: 10px; color: #6c7086; }
+  .fence-meta-row { display: flex; align-items: center; gap: 0.5ch; margin-top: 0.25ch; }
+  .fence-meta-label { color: #6c7086; min-width: 8ch; }
+  .fence-meta-value { color: #cdd6f4; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* Budget Panel */
+  .budget { grid-column: 1 / -1; grid-row: 3; background: #181825; border-top: 1px solid #45475a; padding: 0.5ch 2ch; display: flex; gap: 3ch; align-items: center; flex-wrap: wrap; }
+  .budget-item { display: flex; align-items: center; gap: 1.5ch; }
+  .budget-label { color: #6c7086; font-size: 11px; min-width: 10ch; }
+  .budget-bar { width: 25ch; height: 0.6ch; background: #313244; border-radius: 3px; overflow: hidden; position: relative; }
+  .budget-fill { height: 100%; border-radius: 3px; transition: width 0.3s, background 0.3s; }
+  .budget-fill.ok { background: linear-gradient(90deg, #a6e3a1, #89dceb); }
+  .budget-fill.warn { background: linear-gradient(90deg, #f9e2af, #fab387); }
+  .budget-fill.crit { background: linear-gradient(90deg, #f38ba8, #eba0ac); }
+  .budget-value { color: #cdd6f4; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 12ch; text-align: right; }
+  .budget-limit { color: #6c7086; font-size: 10px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1e1e2e; }
+  ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #585b70; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="dashboard">
+  <!-- Header -->
+  <header class="header">
+    <div>
+      <div class="title">📋 Gentle Cowork — Blackboard Dashboard</div>
+      <div class="subtitle">Real-time monitoring · Contracts · Leases · Fences · Budget</div>
+    </div>
+    <div class="status-indicators">
+      <div class="indicator"><span class="dot running"></span><span>Master</span></div>
+      <div class="indicator"><span class="dot running"></span><span>Workers: 3</span></div>
+      <div class="indicator"><span class="dot warning"></span><span>Budget: 78%</span></div>
+      <div class="indicator"><span class="dot running"></span><span>Sync</span></div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <!-- Contracts Panel -->
+  <section class="contracts" aria-label="Contracts">
+    <header class="panel-header">
+      <span class="panel-title">Contracts</span>
+      <span class="panel-count" id="contract-count">4 total</span>
+    </header>
+    <div class="contract-list" id="contract-list">
+      <article class="contract-item">
+        <header class="contract-header">
+          <span class="contract-id">gc-1</span>
+          <span class="contract-status status-completed">completed</span>
+        </header>
+        <div class="contract-meta">
+          <span class="meta-item"><span class="meta-label">Role:</span><span class="meta-value">implementer</span></span>
+          <span class="meta-item"><span class="meta-label">Worker:</span><span class="meta-value">worker-abc123</span></span>
+          <span class="meta-item"><span class="meta-label">Fence:</span><span class="meta-value">1847392</span></span>
+        </div>
+        <div class="contract-objective">Implement file locking (flock) in blackboard.ts</div>
+      </article>
+      <article class="contract-item">
+        <header class="contract-header">
+          <span class="contract-id">gc-2</span>
+          <span class="contract-status status-completed">completed</span>
+        </header>
+        <div class="contract-meta">
+          <span class="meta-item"><span class="meta-label">Role:</span><span class="meta-value">implementer</span></span>
+          <span class="meta-item"><span class="meta-label">Worker:</span><span class="meta-value">worker-abc123</span></span>
+          <span class="meta-item"><span class="meta-label">Fence:</span><span class="meta-value">2047333</span></span>
+        </div>
+        <div class="contract-objective">Implement lease mechanism with fencing tokens</div>
+      </article>
+      <article class="contract-item">
+        <header class="contract-header">
+          <span class="contract-id">gc-3</span>
+          <span class="contract-status status-completed">completed</span>
+        </header>
+        <div class="contract-meta">
+          <span class="meta-item"><span class="meta-label">Role:</span><span class="meta-value">implementer</span></span>
+          <span class="meta-item"><span class="meta-label">Worker:</span><span class="meta-value">worker-abc123</span></span>
+          <span class="meta-item"><span class="meta-label">Fence:</span><span class="meta-value">1547392</span></span>
+        </div>
+        <div class="contract-objective">Implement orphan recovery sweep</div>
+      </article>
+      <article class="contract-item">
+        <header class="contract-header">
+          <span class="contract-id">gc-4</span>
+          <span class="contract-status status-completed">completed</span>
+        </header>
+        <div class="contract-meta">
+          <span class="meta-item"><span class="meta-label">Role:</span><span class="meta-value">implementer</span></span>
+          <span class="meta-item"><span class="meta-label">Worker:</span><span class="meta-value">worker-abc123</span></span>
+          <span class="meta-item"><span class="meta-label">Fence:</span><span class="meta-value">1847392</span></span>
+        </div>
+        <div class="contract-objective">Implement merge logic with version counter</div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Leases Panel -->
+  <section class="leases" aria-label="Leases">
+    <header class="panel-header">
+      <span class="panel-title">Active Leases</span>
+      <span class="panel-count">3 active</span>
+    </header>
+    <div id="leases-list">
+      <article class="lease-item">
+        <header class="lease-header">
+          <span class="lease-holder">worker-abc123</span>
+          <span class="lease-fence">F: 2047333</span>
+        </header>
+        <div class="lease-meta">
+          <div class="lease-meta-row"><span class="lease-meta-label">Contract:</span><span class="lease-meta-value">gc-4</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">TTL:</span><span class="lease-meta-value">28.5s</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">Acquired:</span><span class="lease-meta-value">14:32:10</span></div>
+        </div>
+        <div class="lease-progress"><div class="lease-progress-bar" style="width: 72%"></div></div>
+      </article>
+      <article class="lease-item">
+        <header class="lease-header">
+          <span class="lease-holder">worker-def456</span>
+          <span class="lease-fence">F: 1547392</span>
+        </header>
+        <div class="lease-meta">
+          <div class="lease-meta-row"><span class="lease-meta-label">Contract:</span><span class="lease-meta-value">gc-3</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">TTL:</span><span class="lease-meta-value">12.3s</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">Acquired:</span><span class="lease-meta-value">14:32:45</span></div>
+        </div>
+        <div class="lease-progress"><div class="lease-progress-bar" style="width: 41%"></div></div>
+      </article>
+      <article class="lease-item">
+        <header class="lease-header">
+          <span class="lease-holder">worker-ghi789</span>
+          <span class="lease-fence">F: 1847392</span>
+        </header>
+        <div class="lease-meta">
+          <div class="lease-meta-row"><span class="lease-meta-label">Contract:</span><span class="lease-meta-value">gc-1</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">TTL:</span><span class="lease-meta-value">5.1s</span></div>
+          <div class="lease-meta-row"><span class="lease-meta-label">Acquired:</span><span class="lease-meta-value">14:33:20</span></div>
+        </div>
+        <div class="lease-progress"><div class="lease-progress-bar" style="width: 17%"></div></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Fences Panel -->
+  <section class="fences" aria-label="Fences">
+    <header class="panel-header">
+      <span class="panel-title">Fence Registry</span>
+      <span class="panel-count">4 fences</span>
+    </header>
+    <div id="fences-list">
+      <article class="fence-item">
+        <header class="fence-header">
+          <span class="fence-contract">gc-4</span>
+          <span class="fence-value">F: 2047333</span>
+        </header>
+        <div class="fence-meta">
+          <div class="fence-meta-row"><span class="fence-meta-label">Holder:</span><span class="fence-meta-value">worker-abc123</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Status:</span><span class="fence-meta-value">active</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Renewed:</span><span class="fence-meta-value">14:32:55</span></div>
+        </div>
+      </article>
+      <article class="fence-item">
+        <header class="fence-header">
+          <span class="fence-contract">gc-3</span>
+          <span class="fence-value">F: 1547392</span>
+        </header>
+        <div class="fence-meta">
+          <div class="fence-meta-row"><span class="fence-meta-label">Holder:</span><span class="fence-meta-value">worker-def456</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Status:</span><span class="fence-meta-value">active</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Renewed:</span><span class="fence-meta-value">14:32:50</span></div>
+        </div>
+      </article>
+      <article class="fence-item">
+        <header class="fence-header">
+          <span class="fence-contract">gc-1</span>
+          <span class="fence-value">F: 1847392</span>
+        </header>
+        <div class="fence-meta">
+          <div class="fence-meta-row"><span class="fence-meta-label">Holder:</span><span class="fence-meta-value">worker-ghi789</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Status:</span><span class="fence-meta-value">expiring</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Renewed:</span><span class="fence-meta-value">14:32:20</span></div>
+        </div>
+      </article>
+      <article class="fence-item">
+        <header class="fence-header">
+          <span class="fence-contract">gc-2</span>
+          <span class="fence-value">F: 1847392</span>
+        </header>
+        <div class="fence-meta">
+          <div class="fence-meta-row"><span class="fence-meta-label">Holder:</span><span class="fence-meta-value">worker-abc123</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Status:</span><span class="fence-meta-value">completed</span></div>
+          <div class="fence-meta-row"><span class="fence-meta-label">Renewed:</span><span class="fence-meta-value">14:32:05</span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Budget Panel -->
+  <footer class="budget" aria-label="Budget Usage">
+    <div class="budget-item">
+      <span class="budget-label">Model Calls</span>
+      <div class="budget-bar"><div class="budget-fill ok" style="width: 45%"></div></div>
+      <span class="budget-value">45 / 100</span>
+      <span class="budget-limit">(45%)</span>
+    </div>
+    <div class="budget-item">
+      <span class="budget-label">Wall Time</span>
+      <div class="budget-bar"><div class="budget-fill ok" style="width: 22%"></div></div>
+      <span class="budget-value">1.2h / 5h</span>
+      <span class="budget-limit">(24%)</span>
+    </div>
+    <div class="budget-item">
+      <span class="budget-label">Tokens</span>
+      <div class="budget-bar"><div class="budget-fill warn" style="width: 78%"></div></div>
+      <span class="budget-value">15.2k / 20k</span>
+      <span class="budget-limit">(76%)</span>
+    </div>
+    <div class="budget-item">
+      <span class="budget-label">Events</span>
+      <div class="budget-bar"><div class="budget-fill ok" style="width: 32%"></div></div>
+      <span class="budget-value">16 / 50</span>
+      <span class="budget-limit">(32%)</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+  // Clock update
+  function updateClock() {
+    const now = new Date();
+    const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('clock').textContent = time;
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // Animate progress bars on load
+  document.querySelectorAll('.lease-progress-bar').forEach(bar => {
+    const width = bar.style.width;
+    bar.style.width = '0%';
+    setTimeout(() => { bar.style.width = width; }, 100);
+  });
+</script>
+</body>
+</html>

@@ -16,6 +16,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import gentleCoworkExtension from "./gentle-cowork.ts";
+import { STATE_VERSION } from "./blackboard.ts";
 import type { TaskContract } from "./types.ts";
 
 type CommandHandler = RegisteredCommand["handler"];
@@ -49,10 +50,11 @@ function createApiMock(): ApiMock {
 }
 
 /** Command-context mock that captures ui notifications. */
-function createCtxMock(): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn> } {
+function createCtxMock(): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn> } {
   const notify = vi.fn();
-  const ctx = { ui: { notify } } as unknown as ExtensionCommandContext;
-  return { ctx, notify };
+  const confirm = vi.fn(async () => true); // simulate user confirmation
+  const ctx = { ui: { notify, confirm } } as unknown as ExtensionCommandContext;
+  return { ctx, notify, confirm };
 }
 
 /** A custom (non-builtin) tool call — the only kind that can carry a delegation. */
@@ -105,10 +107,13 @@ function createChainConnectFake(options: { verifierAlwaysChanges?: boolean } = {
         return [];
       }),
       getLastAssistantText: vi.fn(async () => {
-        const contractId = lastPrompt.match(/cc-\d+/)?.[0] ?? "cc-1";
+        const contractId = lastPrompt.match(/(cc|vc)-\d+/)?.[0] ?? "cc-1";
         if (lastPrompt.includes("cowork-planner")) return planJson;
         if (lastPrompt.includes("cowork-implementer")) return artifactJson;
-        if (lastPrompt.includes("cowork-verifier")) {
+        if (
+          lastPrompt.includes("verification agent for gentle-cowork ODD spec compliance") ||
+          lastPrompt.includes("cowork-verifier")
+        ) {
           const outcome = options.verifierAlwaysChanges ? "CHANGES" : "APPROVE";
           return JSON.stringify({
             contractId,
@@ -176,7 +181,7 @@ describe("gentle-cowork /cowork-verify (Phase 1)", () => {
       await local.commands.get("cowork-verify")!("", ctx);
 
       expect(notify).toHaveBeenCalledWith(expect.stringContaining("APPROVE"), "info");
-      expect(rpcFake.promptAndWait).toHaveBeenCalledWith(expect.stringContaining("cowork-verifier"), 120_000);
+      expect(rpcFake.promptAndWait).toHaveBeenCalledWith(expect.stringContaining("verification agent for gentle-cowork ODD spec compliance"), undefined, 300_000);
       const logged = errorSpy.mock.calls.flat().map(String).join(" ");
       expect(logged).toContain("vc-1");
       expect(logged).toContain("APPROVE");
@@ -264,9 +269,10 @@ describe("gentle-cowork /cowork-chain (Phase 2)", () => {
 describe("gentle-cowork blackboard persistence (Phase 4)", () => {
   type SessionStartHandler = (event: SessionStartEvent, ctx: ExtensionContext) => Promise<void> | void;
 
-  /** A well-formed TaskContract as it appears on the blackboard. */
+  /** A well-formed TaskContract as it appears on the blackboard (new format, for seeding). */
   function persistedContract(overrides: Partial<TaskContract> = {}): TaskContract {
-    return {
+    const status = overrides.status ?? "in_progress";
+    const base: TaskContract = {
       id: "gc-7",
       objective: "Interrupted delegation",
       role: "planner",
@@ -274,9 +280,19 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
       acceptanceCriteria: ["all widget tests pass"],
       specRef: "odd/tasks/gentle-cowork-extension.md",
       artifacts: [],
-      status: "in_progress",
+      status,
+      version: 1,
+      history: [{
+        status,
+        version: 1,
+        nodeId: "legacy",
+        timestamp: new Date().toISOString(),
+      }],
+      leaseFence: undefined,
+      retryCount: 0,
       ...overrides,
     };
+    return base;
   }
 
   /** Fires the extension's session_start handler as Pi does on session load. */
@@ -288,10 +304,11 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
   }
 
   /** Command-context mock with a real project cwd (the blackboard location). */
-  function createCtxMockWithCwd(cwd: string): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn> } {
+  function createCtxMockWithCwd(cwd: string): { ctx: ExtensionCommandContext; notify: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn> } {
     const notify = vi.fn();
-    const ctx = { ui: { notify }, cwd } as unknown as ExtensionCommandContext;
-    return { ctx, notify };
+    const confirm = vi.fn(async () => true); // simulate user confirmation
+    const ctx = { ui: { notify, confirm }, cwd } as unknown as ExtensionCommandContext;
+    return { ctx, notify, confirm };
   }
 
   /** The blackboard state file path for a project cwd. */
@@ -301,7 +318,8 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
 
   /** Reads the persisted contracts straight from the state file on disk. */
   function readBoard(cwd: string): TaskContract[] {
-    const raw = JSON.parse(readFileSync(boardPath(cwd), "utf8")) as { contracts: TaskContract[] };
+    const raw = JSON.parse(readFileSync(boardPath(cwd), "utf8")) as { version: number; contracts: TaskContract[] };
+    expect(raw.version).toBe(STATE_VERSION);
     return raw.contracts;
   }
 
@@ -389,8 +407,15 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
 
       // Mid-flight (chain parked on its first role turn): the interception
       // already persisted the new contract as in_progress, next id gc-4.
+      // Note: old is normalized by session_start, so it includes version/history/retryCount
+      const normalizedOld = {
+        ...old,
+        version: 1,
+        history: [{ status: "completed", version: 1, nodeId: "legacy", timestamp: expect.any(String) }],
+        retryCount: 0,
+      };
       expect(readBoard(tmp)).toEqual([
-        old,
+        normalizedOld,
         {
           id: "gc-4",
           objective: "Add the demo widget",
@@ -400,6 +425,9 @@ describe("gentle-cowork blackboard persistence (Phase 4)", () => {
           specRef: "odd/tasks/widget.md",
           artifacts: [],
           status: "in_progress",
+          version: 1,
+          history: [{ status: "pending", version: 1, nodeId: "extension", timestamp: expect.any(String) }],
+          retryCount: 0,
         },
       ]);
 

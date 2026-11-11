@@ -6,7 +6,12 @@
   "main": "src/gentle-cowork.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dogfood:worker": "tsx scripts/dogfood-worker.ts",
+    "dogfood:master": "tsx scripts/dogfood-master.ts",
+    "dogfood:run": "tsx scripts/dogfood-native.ts run --timeout 180",
+    "worker:remote": "tsx scripts/launch-remote-worker.ts",
+    "worker:container": "tsx scripts/run-remote-worker.ts"
   },
   "keywords": [
     "pi",
@@ -18,8 +23,19 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^1.2.0",
+    "@earendil-works/pi-coding-agent": "^1.5.0",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
+  },
+  "overrides": {
+    "undici": "8.12.2"
+  },
+  "dependencies": {
+    "@types/blessed": "^0.1.27",
+    "@types/node-forge": "^1.3.14",
+    "blessed": "^0.1.81",
+    "node-forge": "^1.4.3"
   }
 }

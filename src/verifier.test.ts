@@ -6,6 +6,7 @@ import {
   extractJsonObject,
   parseVerdict,
   runVerifier,
+  runNativeVerify,
 } from "./verifier.ts";
 
 /** A fake VerifierRpc with captured calls, mirroring the injected transport surface. */
@@ -126,7 +127,7 @@ describe("runVerifier", () => {
   it("passes the timeout to promptAndWait when provided", async () => {
     const { rpc } = createRpcFake(VALID_VERDICT_JSON);
     await runVerifier({ prompt: "p", contractId: "vc-1", rpc, timeoutMs: 5000 });
-    expect(rpc.promptAndWait).toHaveBeenCalledWith("p", 5000);
+    expect(rpc.promptAndWait).toHaveBeenCalledWith("p", undefined, 5000);
   });
 
   it("throws VerifierProtocolError when the assistant returns null text, stopping the client", async () => {
@@ -154,13 +155,13 @@ describe("buildVerifyPrompt", () => {
       { id: "S1", text: "First requirement." },
       { id: "S2", text: "Second requirement." },
     ]);
-    expect(prompt).toContain("cowork-verifier");
+    expect(prompt).toContain("verification agent for gentle-cowork ODD spec compliance");
     expect(prompt).toContain("vc-1");
     expect(prompt).toContain("odd/tasks/widget.md");
     expect(prompt).toContain("S1: First requirement.");
     expect(prompt).toContain("S2: Second requirement.");
-    expect(prompt).toContain('"APPROVE"');
-    expect(prompt).toContain('"CHANGES"');
+    expect(prompt).toContain('"APPROVE|CHANGES"');
+    expect(prompt).toContain('"pass|fail|untested"');
   });
 
   it("Phase 1 test requirements target the repository spec types", () => {
@@ -170,5 +171,36 @@ describe("buildVerifyPrompt", () => {
       expect(requirement.text.length).toBeGreaterThan(0);
     }
     expect(PHASE1_TEST_REQUIREMENTS.some((r) => r.text.includes("src/types.ts"))).toBe(true);
+  });
+});
+
+describe("runNativeVerify", () => {
+  it("returns verification result with S1/S2 checks", async () => {
+    const result = await runNativeVerify("vc-test", "odd/tasks/test.md", ".");
+    expect(result).toHaveProperty("outcome");
+    expect(["APPROVE", "CHANGES"]).toContain(result.outcome);
+    expect(result.requirements).toHaveLength(2);
+    expect(result.requirements.map(r => r.id).sort()).toEqual(["S1", "S2"]);
+    for (const req of result.requirements) {
+      expect(["pass", "fail", "untested"]).toContain(req.verdict);
+      expect(typeof req.evidence).toBe("string");
+      expect(req.evidence.length).toBeGreaterThan(0);
+    }
+    expect(typeof result.report).toBe("string");
+    expect(result.report.length).toBeGreaterThan(0);
+  });
+
+  it("verifies S1: TaskContract with specRef: string", async () => {
+    const result = await runNativeVerify("vc-test", "odd/tasks/test.md", ".");
+    const s1 = result.requirements.find(r => r.id === "S1");
+    expect(s1).toBeDefined();
+    expect(s1!.id).toBe("S1");
+  });
+
+  it("verifies S2: CoworkRole with exactly three values", async () => {
+    const result = await runNativeVerify("vc-test", "odd/tasks/test.md", ".");
+    const s2 = result.requirements.find(r => r.id === "S2");
+    expect(s2).toBeDefined();
+    expect(s2!.id).toBe("S2");
   });
 });

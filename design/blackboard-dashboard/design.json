@@ -1,0 +1,28 @@
+{
+  "title": "Gentle Cowork Blackboard Dashboard",
+  "brief": "TUI dashboard for monitoring blackboard state: contracts, leases, fences, and budget usage in real-time",
+  "feature": "odd/tasks/gentle-cowork-extension.md",
+  "artboards": [
+    {
+      "file": "01-main-dashboard.html",
+      "title": "Main Dashboard - Full Layout (180x50)",
+      "tradeoff": "Dense information layout with all sections visible; trades some visual breathing room for maximum data density",
+      "width": 180,
+      "height": 50
+    },
+    {
+      "file": "02-narrow-view.html",
+      "title": "Narrow View - Compact Layout (80x24)",
+      "tradeoff": "Compact layout for small terminals; stacks sections vertically, reduces horizontal density but keeps all critical data visible",
+      "width": 80,
+      "height": 24
+    },
+    {
+      "file": "03-alert-view.html",
+      "title": "Alert View - Critical Issues Focus (180x50)",
+      "tradeoff": "Alert-focused layout highlighting critical issues (expiring leases, budget thresholds, failed contracts); trades general overview for actionable urgency",
+      "width": 180,
+      "height": 50
+    }
+  ]
+}

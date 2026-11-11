@@ -1,0 +1,120 @@
+{
+  "kind": "gentle-pi.profile_model_fallbacks",
+  "fallbacks": {
+    "review-refuter": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-validator": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-readability": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-reliability": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-resilience": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-risk": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "jd-judge-a": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "jd-judge-b": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "jd-fix-agent": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "gentle-ai-verify": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "orchestrator": [
+      "nan/deepseek-v4-flash",
+      "nan/glm5.3",
+      "nan/qwen3.8-flash"
+    ],
+    "gentle-ai-worker": [
+      "nan/deepseek-v4-flash",
+      "nan/glm5.3",
+      "nan/mimo-v2.6-flash"
+    ],
+    "gentle-ai-explore": [
+      "nan/deepseek-v4-flash",
+      "nan/qwen3.8-flash",
+      "nan/mimo-v2.6-flash"
+    ],
+    "gentle-ai-verify": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-readability": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-reliability": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-resilience": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-risk": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "jd-judge-a": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "jd-judge-b": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "jd-fix-agent": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-validator": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ],
+    "review-refuter": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ]
+  }
+}

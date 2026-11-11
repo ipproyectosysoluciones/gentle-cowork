@@ -22,7 +22,7 @@ describe("gentle-cowork role-child spawn contract", () => {
   it("marks the child as a role child (GENTLE_COWORK_ROLE) and disables its delegation tools", () => {
     vi.mocked(RpcClient).mockClear();
 
-    createRpcSubagent({ cwd: "/tmp/scenario", provider: "nvidia", model: "z-ai/glm-5.3" });
+    createRpcSubagent({ cwd: "/tmp/scenario", provider: "nvidia/nemotron-3-ultra", model: "nemotron-3-ultra" });
 
     expect(RpcClient).toHaveBeenCalledTimes(1);
     expect(RpcClient).toHaveBeenCalledWith(
@@ -36,10 +36,10 @@ describe("gentle-cowork role-child spawn contract", () => {
   it("keeps caller-provided extra args after the flat-tree defense args", () => {
     vi.mocked(RpcClient).mockClear();
 
-    createRpcSubagent({ extraArgs: ["--flag"] });
+    createRpcSubagent({ extraArgs: ["--tools", "read"] });
 
     const options = vi.mocked(RpcClient).mock.calls[0]?.[0] as { args: string[] };
-    expect(options.args).toEqual(["--no-session", "--exclude-tools", "subagent_*", "--flag"]);
+    expect(options.args).toEqual(["--no-session", "--exclude-tools", "subagent_*", "--tools", "read"]);
   });
 });
 
@@ -81,8 +81,9 @@ describe("gentle-cowork subagent turn readiness handshake (BLA-26)", () => {
       stop: vi.fn(async () => {}),
     };
 
+    // Increase timeout for this test due to readiness retries with delays
     await expect(runSubagentTurn("plan this", rpc as never)).rejects.toThrow(/did not become ready/i);
     expect(rpc.stop).toHaveBeenCalled();
     expect(rpc.promptAndWait).not.toHaveBeenCalled();
-  });
+  }, 35000);
 });

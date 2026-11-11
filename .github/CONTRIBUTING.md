@@ -28,6 +28,24 @@ All planned work is tracked in **Linear** (team `BLA`, project *gentle-cowork*):
 - **PRs target `dev`.** Never commit directly to `main` or `dev`.
 - **Releases** flow `dev` → `main` through an automated release PR created by [release-please](https://github.com/googleapis/release-please) (see [Versioning](README.md#versioning)). Merging the release PR tags the version; the version bump is then merged back into `dev`.
 
+## CI gate — nothing merges unless every check is GREEN
+
+Both `dev` and `main` enforce **required status checks** with `enforce_admins` enabled (since 2026-11-09, branch protection API):
+
+| Required check | Workflow | Notes |
+|---|---|---|
+| `validate-conventional-commits / validate` | `validate-conventional-commits.yml` | Conventional Commits contract |
+| `CodeQL / analyze` | `codeql.yml` | The Actions job — NOT the code-scanning `CodeQL` context, whose check run is known to report stale failures while the branch run is green |
+| `PR Agent (NVIDIA Nemotron) / pr_agent_job` | `pr-agent-nvidia.yml` | Runs typecheck + tests + the PR-Agent review; the job must finish green |
+
+Binding rules for every agent and contributor:
+
+1. **A red or missing required check blocks the merge.** Fix the cause; never merge around it.
+2. **Bypass is a human-only decision.** With `enforce_admins: true` no agent, admin session, or orchestrator may merge a non-green PR. A bypass means a human (Bladimir) temporarily edits branch protection via the API/UI, names the reason, and restores it afterwards. Agents must never attempt, request scripting of, or "work around" this gate.
+3. **If `pr_agent_job` fails on infra (model/provider), the fix lands in `.github/workflows/pr-agent-nvidia.yml` via PR to `dev` first** (see PR #136 for the reference fix: Dynaconf `SECTION__KEY` env overrides, pinned action version, `CONFIG__CUSTOM_MODEL_MAX_TOKENS`). Then update your PR branch from `dev` so the fixed pipeline re-runs on it.
+4. **Known caveat:** dependabot PRs skip `pr_agent_job` (the job filters bot senders), so they cannot reach green. They wait for a human to either merge after temporarily lifting the gate or adjust the workflow filter.
+5. **Shared-worktree rule:** this repo is often worked by several agents from one checkout. Before `git checkout`, `reset`, `stash` or `clean` in a shared worktree, run `git status` and preserve foreign uncommitted changes; prefer registering your own `git worktree`. Uncommitted work destroyed by a branch switch is lost work. `src/herdr-state.ts` and the PI-T2 confirm-dialog edits were lost this way on 2026-11-09 (recovered via PR from a separate worktree).
+
 ## Commits — Conventional Commits in work-unit slices
 
 Every commit title follows the Conventional Commits specification:

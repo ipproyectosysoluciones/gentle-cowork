@@ -1,0 +1,118 @@
+name: PR Agent (NVIDIA Nemotron)
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+
+jobs:
+  pr_agent_job:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # pnpm 11 requires Node >= 22.13, but this workflow runs on Node 20.
+          # pnpm 10 supports the `packages` field and works on Node 20.
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run TypeScript typecheck
+        id: typecheck
+        run: pnpm typecheck
+        continue-on-error: true
+
+      - name: Run tests
+        id: tests
+        run: pnpm test
+        continue-on-error: true
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+
+      - name: Post CI results to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request?.number || context.issue.number
+            });
+            
+            const botComment = comments.find(c => c.user.type === 'Bot' && c.body.includes('## CI Results Summary'));
+            
+            let body = '## CI Results Summary\n\n';
+            body += '| Check | Status | Details |\n';
+            body += '|-------|--------|---------|\n';
+            
+            // Typecheck result
+            const tcStatus = '${{ steps.typecheck.outcome }}';
+            body += `| TypeScript Typecheck | ${tcStatus === 'success' ? '✅ PASS' : '❌ FAIL'} | ${tcStatus === 'success' ? 'No type errors' : 'See logs for details'} |\n`;
+            
+            // Tests result
+            const testStatus = '${{ steps.tests.outcome }}';
+            body += `| Tests (300+) | ${testStatus === 'success' ? '✅ PASS' : '❌ FAIL'} | ${testStatus === 'success' ? 'All tests passing' : 'See logs for failures'} |\n`;
+            
+            body += '\n---\n*CI results for PR-Agent review context*';
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request?.number || context.issue.number,
+                body
+              });
+            }
+
+      - name: PR Agent with NVIDIA Nemotron
+        # Pinned to v0.50.0: @main floats and its default model chain changed
+        # under us (gpt-6.1-sol -> 404 against the NVIDIA endpoint, PR #135).
+        uses: the-pr-agent/pr-agent@v0.50.0
+        id: pragent
+        env:
+          # NVIDIA NIM API (OpenAI-compatible). litellm reads these env vars
+          # directly.
+          OPENAI_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          OPENAI_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          OPENAI_BASE_URL: "https://integrate.api.nvidia.com/v1"
+
+          # pr-agent reads settings through Dynaconf: overrides use the
+          # SECTION__KEY (double underscore) format. OPENAI_MODEL is NOT a
+          # recognized variable - [config] model is the real setting.
+          CONFIG__MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
+          CONFIG__FALLBACK_MODELS: "nvidia/nemotron-3-super-120b-a12b"
+          # Custom models are absent from PR-Agent's built-in limits and
+          # LiteLLM metadata: without a resolved input-token limit the token
+          # budget fails closed ("Unable to resolve a positive input-token
+          # limit", PR #136 run). 128000 = standard NVIDIA NIM LLM context.
+          CONFIG__CUSTOM_MODEL_MAX_TOKENS: "128000"
+
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

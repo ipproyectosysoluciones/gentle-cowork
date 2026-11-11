@@ -54,7 +54,7 @@ mindmap
 |---|---|---|
 | 🧠 **cowork-planner** | read-only | Decompose the objective into a plan with scope and acceptance criteria |
 | 🔨 **cowork-implementer** | scoped write | Execute one plan step; produces an artifact summary |
-| ✅ **cowork-verifier** | read + tests | Validate changes per ODD spec requirement (S#); emit `APPROVE` or `CHANGES` verdict |
+| ✅ **cowork-verifier** | read + tests | Validate changes per ODD spec requirement (S#) via native `gentle-shell` review (`review.start`/`review.finalize`, lenses `review-readability` + `review-reliability`); emit `APPROVE` or `CHANGES` verdict |
 
 **The intelligence stays agent-side.** The bridge/extension only routes — every delegation sends a pre-crafted prompt to the assistant, which uses its native tools.
 
@@ -124,7 +124,7 @@ graph TD
 | **ODD Contracts** | `TaskContract` with `specRef`, acceptance criteria, version counter |
 | **Oracle (Metering + Guards)** | `meteredStepExecutor`, `evaluateGuards`, master enforcement |
 | **Role Orchestration** | Planner → Implementer → Verifier chain, CHANGES retry loop |
-| **Verification** | `cowork-verifier` with per-S# verdict, blackboard persistence |
+| **Verification** | `cowork-verifier` with per-S# verdict, blackboard persistence; native review integration via `gentle-shell` (`review.start`/`review.finalize`, lenses `review-readability` + `review-reliability`) |
 | **Delegation Hook** | `tool_call` interception → role orchestration instead of native delegation |
 | **Blackboard Persistence** | Contract state, leases, fences, budget/metering in versioned JSON |
 | **WebSocket Protocol** | Message types, framing, lease/fence discipline |
@@ -160,7 +160,7 @@ graph TD
 |---|---|---|
 | 🧠 **cowork-planner** | read-only | Decompose the objective into a plan with scope and acceptance criteria |
 | 🔨 **cowork-implementer** | scoped write | Execute one plan step; produces an artifact summary |
-| ✅ **cowork-verifier** | read + tests | Validate changes per ODD spec requirement (S#); emit `APPROVE` or `CHANGES` verdict |
+| ✅ **cowork-verifier** | read + tests | Validate changes per ODD spec requirement (S#) via native `gentle-shell` review (`review.start`/`review.finalize`, lenses `review-readability` + `review-reliability`); emit `APPROVE` or `CHANGES` verdict |
 
 **The intelligence stays agent-side.** The bridge/extension only routes — every delegation sends a pre-crafted prompt to the assistant, which uses its native tools.
 

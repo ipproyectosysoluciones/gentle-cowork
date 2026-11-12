@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > through conventional commits (`feat` → minor, `fix` → patch, breaking changes →
 > major; `docs`/`chore` never trigger a release) and the automation records them.
 
+## [1.2.0](https://github.com/ipproyectosysoluciones/gentle-cowork/compare/v1.1.0...v1.2.0) (2026-11-12)
+
+
+### Features
+
+* **PI-T3:** wire Herdr state export to MasterOrchestrator & LocalWorker ([53b323e](https://github.com/ipproyectosysoluciones/gentle-cowork/commit/53b323e33cbc161dac27fe60f9f0ea4d956a81ce))
+* **zero-trust:** fix T5.7 role permissions & tests; add Pi package manifest ([#139](https://github.com/ipproyectosysoluciones/gentle-cowork/issues/139)) ([a99c3c0](https://github.com/ipproyectosysoluciones/gentle-cowork/commit/a99c3c0591ed44f19abe3f731e43d0af7c069602))
+* **zero-trust:** fix T5.7 role permissions & tests; add Pi package manifest for npm publish ([7f35417](https://github.com/ipproyectosysoluciones/gentle-cowork/commit/7f35417f5fec6baee493eb2e7e931e7dd3732bc3))
+
 ## [1.1.0](https://github.com/ipproyectosysoluciones/gentle-cowork/compare/v1.0.0...v1.1.0) (2026-11-11)
 
 

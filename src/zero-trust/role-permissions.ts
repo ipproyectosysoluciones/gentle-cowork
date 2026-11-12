@@ -30,13 +30,23 @@ export const RoleSendPermissions: Record<string, string[]> = {
     "welcome",           // System messages
     "error",             // System messages
     "step_result",       // Implementer can report results
-    "heartbeat"          // Implementer can send heartbeats
+    "heartbeat",         // Implementer can send heartbeats
+    "lease_request",     // Implementer can request leases
+    "lease_release"      // Implementer can release leases
+  ],
+  "worker": [
+    "welcome",           // System messages
+    "error",             // System messages
+    "step_result",       // Worker can report results
+    "heartbeat",         // Worker can send heartbeats
+    "lease_request",     // Worker can request leases
+    "lease_release"      // Worker can release leases
   ],
   "verifier": [
     "welcome",           // System messages
     "error",             // System messages
     // Verifier doesn't typically send messages in this flow
-    // They receive step results and send verdicts (which would be part of step_result in a full implementation)
+    // They receive step results and send verdicts
   ]
 };
 
@@ -47,17 +57,29 @@ export const RoleReceivePermissions: Record<string, string[]> = {
   "planner": [
     "welcome",           // System messages
     "error",             // System messages
-    "step_result"        // Planner can receive step results (to verify completion)
+    "step_result",       // Planner can receive step results (to verify completion)
+    "heartbeat",         // Planner can receive heartbeats
+    "lease_grant"        // Planner can receive lease grants
   ],
   "implementer": [
     "welcome",           // System messages
     "error",             // System messages
-    "assign_step"        // Implementer can receive assignments
+    "assign_step",       // Implementer can receive assignments
+    "heartbeat",         // Implementer can receive heartbeats
+    "lease_grant"        // Implementer can receive lease grants
+  ],
+  "worker": [
+    "welcome",           // System messages
+    "error",             // System messages
+    "assign_step",       // Worker can receive assignments
+    "heartbeat",         // Worker can receive heartbeats
+    "lease_grant"        // Worker can receive lease grants
   ],
   "verifier": [
     "welcome",           // System messages
     "error",             // System messages
-    "step_result"        // Verifier can receive step results to make verdicts
+    "step_result",       // Verifier can receive step results to make verdicts
+    "heartbeat"          // Verifier can receive heartbeats
   ]
 };
 

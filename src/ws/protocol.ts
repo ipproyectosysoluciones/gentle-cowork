@@ -1,6 +1,6 @@
 /**
  * WS Protocol for Phase 5 Stage 3 — Master/Worker coordination.
- * Reuses framing pattern from dot-telegram daemon protocol.
+ * Custom framing protocol for multi-node coordination.
  */
 import { randomBytes } from "node:crypto";
 
@@ -8,7 +8,7 @@ export const WS_PROTOCOL_VERSION = 1;
 export const WS_PORT = 4318;
 export const WS_BIND = "127.0.0.1";
 
-/** Close codes (following dot-telegram pattern) */
+/** Close codes (custom protocol) */
 export const CloseCode = {
 	unauthorized: 4401,
 	badProtocol: 4400,

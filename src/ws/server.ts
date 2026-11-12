@@ -4,7 +4,7 @@
  * Port: 4318 (configurable via WS_PORT env)
  * Binding: 127.0.0.1 (WS_BIND env)
  * Protocol: JSON over WebSocket, newline-delimited
- * Reuses framing pattern from dot-telegram daemon protocol.
+ * Custom framing protocol for multi-node coordination.
  */
 
 import WebSocket, { WebSocketServer } from "ws";

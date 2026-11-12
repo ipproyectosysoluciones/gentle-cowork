@@ -5,7 +5,7 @@ Multi-role orchestration extension for [Pi](https://pi.dev) / [gentle-shell](htt
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict,%20no%20any-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-24%20ESM-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Vitest](https://img.shields.io/badge/tested%20with-Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/)
-[![Pi](https://img.shields.io/badge/Pi-1.2.0%20extension-8A72FF?style=flat-square&logo=pi&logoColor=white)](https://pi.dev)
+[![Pi](https://img.shields.io/badge/Pi-1.5.0%20extension-8A72FF?style=flat-square&logo=pi&logoColor=white)](https://pi.dev)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196?style=flat-square&logo=conventionalcommits&logoColor=white)](https://conventionalcommits.org/)
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-contracts%20%2B%20release--please-2088FF?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/features/actions)
 [![Linear](https://img.shields.io/badge/Linear-issue%20tracking-5E6AD2?style=flat-square&logo=linear&logoColor=white)](https://linear.app)
@@ -16,6 +16,8 @@ Multi-role orchestration extension for [Pi](https://pi.dev) / [gentle-shell](htt
 ## About
 
 **gentle-cowork** is the multi-node orchestration extension for the **gentle-pi / gentle-shell** ecosystem. It turns Organic Driven Development (ODD) delegation decisions into a structured, verified, multi-role workflow — without ever becoming a silent spec-driven development (SDD) framework.
+
+### Current Version: **1.2.2** (2026-11-12)
 
 ### Why this exists
 
@@ -50,7 +52,8 @@ The extension provides three specialized roles that operate on a shared **blackb
 | **Phase 2** | ✅ | Full orchestration chain + **Native Review Integration** (review.start/finalize, lenses review-readability + review-reliability) |
 | **Phase 3** | ✅ | Invisible delegation via tool_call hook |
 | **Phase 4** | ✅ | Blackboard state persistence (pending → in_progress → completed/failed) |
-| **Phase 5** | 🏗️ | Multi-node (remote workers via SSH tunnels, WS transport) |
+| **Phase 5 (local)** | ✅ | Multi-node local (sessions on same machine, blackboard + WS transport) |
+| **Phase 5 (remote)** | 🏗️ | Multi-node remote (SSH tunnels, Docker workers, operator CLI) |
 | **Phase 6-8** | 📋 | Enterprise roadmap (business layer, architectural memory, smart profiles) |
 
 ---
@@ -149,7 +152,7 @@ graph TD
 |---|---|---|
 | **Background Jobs** | `bash_background` tool, job registry, monitor tool | Dogfood runner (`/cowork-dogfood`), future remote worker supervision |
 | **Model Fallback Chains** | `profile-fallbacks.json`, automatic failover per agent | PR-Agent reviewer (`nemotron-3-ultra` → `nemotron-3-super`), verifier, orchestrator |
-| **Command Guards** | Native command guard policies (once/session/always/deny) | `/cowork-*` commands with appropriate policies |
+| **Command Guards** | Native command guard policies (once/session/always/deny) | `/cowork-*` commands with `confirm` policy |
 | **Herdr State File** | `~/.herdr/sessions/<session-id>.json` per session | Master/worker lifecycle state export (PI-T3) |
 | **TUI Riel** | Native sidebar/rail integration point | Blackboard dashboard skill (`gentle-cowork-tui`, PI-T5) |
 | **WebSocket Transport** | Native WS server (`src/ws/server.ts`), mTLS hooks | Multi-node transport (Phase 5) |
@@ -196,6 +199,66 @@ graph TD
 
 ---
 
+## Commands Reference
+
+The extension registers **5 commands** in the Pi session:
+
+| Command | Alias | Description | Phase |
+|---|---|---|---|
+| `/cowork` | — | Show orchestration status (last contract, role, status) | 0 |
+| `/cowork-contract` | — | Show the last TaskContract as JSON | 0 |
+| `/cowork-verify` | — | Spawn cowork-verifier subagent (Phase 1 test) | 1 |
+| `/cowork-chain` | — | Run full planner → implementer → verifier chain | 2 |
+| `/cowork-dogfood` | — | Run dogfooding natively via Pi background jobs | 5 |
+
+### Dogfood subcommands
+
+```bash
+/cowork-dogfood run [--timeout 300]     # Master + worker via bash_background (default 300s)
+/cowork-dogfood master --shared-dir PATH # Master only
+/cowork-dogfood worker --shared-dir PATH # Worker only
+/cowork-dogfood help                     # Show usage
+```
+
+---
+
+## ODD Integration
+
+The extension is designed around **Organic Driven Development (ODD)**:
+
+### Spec by Reference
+Every delegation carries a `specRef` pointing to an ODD task document under `odd/tasks/<feature>.md`. The document structure:
+```
+odd/tasks/<feature>.md
+├── ## Specs (S1, S2, S3...) — numbered requirements quoting user's exact words
+├── ## Tasks (T1, T2, T3...) — one line per task: ID, linked S#, route, commit
+└── ## Log (L1, L2, L3...) — original request verbatim + corrections, evidence, decisions
+```
+
+### Delegation Triggers (named reasons only)
+The `tool_call` hook intercepts delegations **only when ODD has already classified a valid reason**:
+1. **Real parallelism** — 2+ independent units of work (~100+ lines each, launched together)
+2. **Independent verification** — High-risk item requiring `gentle-ai-verify` (data, security, contracts, concurrency, delivery, no-net)
+3. **Context backstop** — Session hit ~150k tokens, delegate next unit
+
+Without a named reason (`reason` field in tool input), **native delegation proceeds untouched**.
+
+### Verification via Native Review
+The `cowork-verifier` uses **gentle-shell native review integration**:
+- `review.start` with lenses `review-readability` (S1 primary) + `review-reliability` (S2 primary)
+- `review.finalize` via `captureResult` + `acknowledgeApproved`
+- Per-S# verdict: `pass` / `fail` / `untested`
+- Outcome: `APPROVE` or `CHANGES` (triggers retry loop, max 3)
+
+### Contract Persistence (Phase 4)
+Every `TaskContract` transition is persisted to the shared blackboard (`.gentle-cowork/blackboard.json`):
+- Atomic JSON with file locking (`.lock` + random suffix)
+- Version counter for optimistic concurrency
+- Lease/fence with cryptographic tokens (`generateFence`)
+- Survives daemon restarts (`session_start` reloads)
+
+---
+
 ## The three roles
 
 | Role | Permission | Responsibility |
@@ -203,18 +266,6 @@ graph TD
 | 🧠 **cowork-planner** | read-only | Decompose the objective into a plan with scope and acceptance criteria |
 | 🔨 **cowork-implementer** | scoped write | Execute one plan step; produces an artifact summary |
 | ✅ **cowork-verifier** | read + tests | Validate changes per ODD spec requirement (S#) via native `gentle-shell` review (`review.start`/`review.finalize`, lenses `review-readability` + `review-reliability`); emit `APPROVE` or `CHANGES` verdict |
-
-**The intelligence stays agent-side.** The bridge/extension only routes — every delegation sends a pre-crafted prompt to the assistant, which uses its native tools.
-
----
-
-## Design principles
-
-1. **Delegate by named reason, never by size.** Activated when ODD already determined that delegation has a valid reason (real parallelism, independent verification, context backstop) — never because a task "looks big".
-2. **Pass the spec by reference.** Subagents receive the path to the ODD feature document, never a paraphrased summary.
-3. **Lightweight task contract, not SDD artifacts.** Each delegation carries a `TaskContract` (`{ id, objective, role, scope, acceptanceCriteria, specRef, artifacts, status }`) — no formal proposal/spec/design documents.
-4. **Flat delegation tree.** Subagents never spawn sub-subagents.
-5. **Invisible to ODD.** The user describes what they need; the extension routes naturally. No `/cowork` invocation required for normal flows.
 
 ---
 
@@ -234,7 +285,7 @@ graph TD
 
 - **Node.js ≥ 24** (pure ESM)
 - **pnpm** (or npm) as package manager
-- **Pi / gentle-shell ≥ 1.2.0** — this is an extension, not a standalone tool
+- **Pi / gentle-shell ≥ 1.5.0** — this is an extension, not a standalone tool
 - **Git**
 - For multi-node (Phase 5): two or more Pi sessions on the same machine
 
@@ -255,11 +306,11 @@ cp .env.example .env  # then edit .env with your keys
 # NVIDIA_API_KEY=nvapi-...
 # OLLAMA_BASE_URL=http://localhost:11434
 
-# 2. Sanity check — both gates must be green
+# 3. Sanity check — both gates must be green
 npx tsc --noEmit      # strict TypeScript, zero errors
-npx vitest run        # 304 tests pass
+npx vitest run        # 321 tests pass
 
-# 3. Load it into your Pi session
+# 4. Load it into your Pi session
 pi -e ./src/gentle-cowork.ts
 ```
 
@@ -275,13 +326,40 @@ cp src/gentle-cowork.ts ~/.pi/agent/extensions/gentle-cowork.ts
 
 The extension registers `/cowork` as a manual trigger. For automatic delegation, the `tool_call` hook detects when gentle-shell is about to delegate and applies the role orchestration based on the named delegation reason.
 
-To watch the extension coordinate itself (two Pi sessions — a master and a worker — building tasks through the shared blackboard):
+### Quick Start
 
 ```bash
+# Start a Pi session with the extension loaded
+pi -e ./src/gentle-cowork.ts
+
+# In the Pi session, check status
+/cowork
+
+# Run a verification test (Phase 1)
+/cowork-verify
+
+# Run the full chain (Phase 2)
+/cowork-chain
+```
+
+### Multi-node Dogfooding (Phase 5 local)
+
+Two Pi sessions on the same machine coordinate through the shared blackboard:
+
+```bash
+# Terminal 1: Master
+npm run dogfood:master -- --shared-dir /tmp/cowork-shared
+
+# Terminal 2: Worker (in another Pi session)
+npm run dogfood:worker -- --shared-dir /tmp/cowork-shared
+
+# Or run both via native background jobs (single command)
 npm run dogfood:run
 ```
 
-To run a worker on a remote VPS (Docker container over an SSH reverse tunnel — T5.9):
+### Remote Worker (Phase 5 remote — in progress)
+
+Run a worker on a remote VPS (Docker container over SSH reverse tunnel):
 
 ```bash
 npm run worker:remote -- --host <vps-host> --user <vps-user> \
@@ -289,14 +367,36 @@ npm run worker:remote -- --host <vps-host> --user <vps-user> \
   --env OPENAI_API_KEY=... --expected-node <worker-node-id>
 ```
 
-The launcher provisions the VPS (installs Docker, writes `/etc/gentle-cowork/worker.env` with mode 0600, starts the worker container with `--restart unless-stopped`), opens the SSH reverse tunnel to the master's WS port, and verifies the worker's registration on the blackboard.
+The launcher provisions the VPS (installs Docker, writes `/etc/gentle-cowork/worker.env` mode 0600, starts the worker container with `--restart unless-stopped`), opens the SSH reverse tunnel to the master's WS port, and verifies the worker's registration on the blackboard.
+
+---
+
+## Zero-Trust Security (T5.7)
+
+The multi-node transport includes a zero-trust layer:
+
+| Layer | Feature | Status |
+|---|---|---|
+| **C1** | mTLS with x509 certificates | ✅ |
+| **C3** | Message size limits | ✅ |
+| **C5** | JSON depth limit | ✅ |
+| **C6** | wss:// TLS config | ✅ |
+| **C7** | Rate limiting | ✅ |
+| **C9** | Inbound message text length limits | ✅ |
+| **L1** | Security headers on Admin API | ✅ |
+| **L2** | Audit log for admin mutating actions | ✅ |
+| **L3** | Application-level ping/pong | ✅ |
+| **M1** | Rate limiting for admin mutating endpoints | ✅ |
+| **M3** | Explicit inbound message text length limits | ✅ |
+
+Admin API endpoints (mutating): `/api/admin/allowlist`, `/api/admin/pair/start`, `/api/admin/pair/regenerate`, `/api/admin/pair/cancel`, `/api/admin/verify`, `/api/admin/unpair`
 
 ---
 
 ## Notes (read before using)
 
 - **Not a standalone binary.** The extension only routes; the intelligence stays in your Pi/gentle-shell session. Without the host agent it does nothing.
-- **Multi-node maturity (Phase 5).** The local stage is complete: sessions on the same machine coordinate through `.gentle-cowork/blackboard.json` with file locking, leases with cryptographic fencing tokens, and version-counter conflict merge. The WebSocket transport (port `4318`, configurable, bound to `127.0.0.1`) is a skeleton for the upcoming remote slice — **TLS/mTLS is not implemented yet; do not expose the port publicly**.
+- **Multi-node maturity.** Local stage complete: sessions on the same machine coordinate through `.gentle-cowork/blackboard.json` with file locking, leases with cryptographic fencing tokens, and version-counter conflict merge. The WebSocket transport (port `4318`, configurable, bound to `127.0.0.1`) — **TLS/mTLS is implemented (C1, C6); do not expose the port publicly without proper certs**.
 - **Verifier authority.** The `cowork-verifier` role only ever runs on the master session — workers never verify, they execute.
 - **Workers are subprocesses.** A worker is a `pi --mode rpc` child process that inherits the model configuration of the session that spawned it.
 - **Quality gates.** Strict TypeScript (`no any`), full suite and typecheck green before every PR — the same contract the extension enforces on the agents it orchestrates.
@@ -322,8 +422,6 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0/). Ver
 ## License
 
 Released under the [MIT License](LICENSE) — Copyright © 2026 Bladimir Parra.
-
-> Credits: the WebSocket framing pattern of the multi-node transport reuses the daemon protocol from **dot-telegram**, created by **Daniel**. Thank you for the solid foundation.
 
 ---
 

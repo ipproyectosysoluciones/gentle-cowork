@@ -3,7 +3,7 @@
  *
  * Tests the WebSocket server for master/worker coordination.
  * Port: 4318 (configurable), Binding: 127.0.0.1
- * Reuses framing pattern from dot-telegram daemon protocol.
+ * Custom framing protocol for multi-node coordination.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";

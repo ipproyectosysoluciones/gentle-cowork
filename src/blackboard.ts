@@ -45,6 +45,15 @@ import {
 import { evaluateGuards, type GuardConfig, type GuardsEvaluation } from "./contract/guards.ts";
 import { type Budget } from "./contract/schema.ts";
 import { generateFence } from "./ws/protocol.ts";
+import {
+	type DecisionGraph,
+	type DecisionNode,
+	type DecisionEdge,
+	type DecisionState,
+	validateDecisionGraph,
+	validateDecisionNode,
+	validateDecisionEdge,
+} from "./architectural-memory.ts";
 
 /** Directory (inside the project cwd) holding the blackboard state file. */
 export const BLACKBOARD_DIR = ".gentle-cowork";
@@ -53,7 +62,7 @@ export const BLACKBOARD_DIR = ".gentle-cowork";
 export const BLACKBOARD_FILENAME = "blackboard.json";
 
 /** Current state file format version. */
-export const STATE_VERSION = 3;
+export const STATE_VERSION = 4;
 
 /** The on-disk shape of the blackboard state file. */
 export interface BlackboardState {
@@ -64,6 +73,8 @@ export interface BlackboardState {
   lastFence: number;
   /** Phase 6.3: usage aggregates per contract (v3; absent on v1/v2 files). */
   usage?: Record<string, ContractUsage>;
+  /** Phase 7.1: decision graph (v4+). */
+  decisions?: DecisionGraph;
 }
 
 /** Lease information with fencing token. */
@@ -149,13 +160,14 @@ function isTaskContract(value: unknown): value is TaskContract {
 function isBlackboardState(value: unknown): value is BlackboardState {
   if (typeof value !== "object" || value === null) return false;
   const s = value as Record<string, unknown>;
-  // Accept v1 (legacy), v2 (pre-metering) and v3 (current) for migration
+  // Accept v1 (legacy), v2 (pre-metering), v3 (pre-decisions), and v4 (current) for migration
   return (
-    (s.version === 1 || s.version === 2 || s.version === STATE_VERSION) &&
+    (s.version === 1 || s.version === 2 || s.version === 3 || s.version === STATE_VERSION) &&
     Array.isArray(s.contracts) &&
     (s.lease === undefined || typeof s.lease === "object") &&
     (s.nodes === undefined || Array.isArray(s.nodes)) &&
-    (s.lastFence === undefined || typeof s.lastFence === "number")
+    (s.lastFence === undefined || typeof s.lastFence === "number") &&
+    (s.decisions === undefined || (typeof s.decisions === "object" && s.decisions !== null))
   );
 }
 
@@ -249,14 +261,14 @@ function releaseWriteLock(fd: number): void {
  * (or entry-filtered) board; only a missing file is silent — everything
  * else leaves one diagnostic line in the launcher log.
  */
-function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: LeaseInfo; nodes: NodeRegistration[]; lastFence: number; usage: Record<string, ContractUsage> } {
+function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: LeaseInfo; nodes: NodeRegistration[]; lastFence: number; usage: Record<string, ContractUsage>; decisions: DecisionGraph } {
   let raw: string;
   try {
     raw = readFileSync(filePath, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { contracts: [], nodes: [], lastFence: 0, usage: {} };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
     console.error(`[gentle-cowork] blackboard unreadable (${filePath}), starting empty: ${errorMessage(error)}`);
-    return { contracts: [], nodes: [], lastFence: 0, usage: {} };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
   }
 
   let parsed: unknown;
@@ -264,7 +276,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
     parsed = JSON.parse(raw);
   } catch (error) {
     console.error(`[gentle-cowork] blackboard corrupt (${filePath}), starting empty: ${errorMessage(error)}`);
-    return { contracts: [], nodes: [], lastFence: 0, usage: {} };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
   }
 
   if (!isBlackboardState(parsed)) {
@@ -272,7 +284,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
       `[gentle-cowork] blackboard has an unrecognized shape (version ${STATE_VERSION} expected) ` +
         `at ${filePath}, starting empty`,
     );
-    return { contracts: [], nodes: [], lastFence: 0, usage: {} };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
   }
 
   const contracts = parsed.contracts.filter(isTaskContract).map(normalizeContract);
@@ -286,6 +298,14 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
   // Provide defaults for v1 files (migration)
     const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
     const lastFence = typeof parsed.lastFence === "number" ? parsed.lastFence : 0;
+
+    // Validate decisions if present
+    let decisions: DecisionGraph = { nodes: [], edges: [] };
+    if (parsed.decisions && validateDecisionGraph(parsed.decisions)) {
+      decisions = parsed.decisions;
+    } else if (parsed.decisions) {
+      console.error(`[gentle-cowork] blackboard decisions malformed at ${filePath}, starting empty`);
+    }
 
     return {
       contracts,
@@ -304,6 +324,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
       ),
       lastFence,
       usage: parseUsage(parsed.usage, filePath),
+      decisions,
     };
 }
 
@@ -401,16 +422,29 @@ export interface Blackboard {
     budget: Budget,
     presentedFence: number,
   ): { paused: boolean; reason?: string };
+  /** Phase 7.1: adds a decision node to the graph. Validates and persists. */
+  addDecision(node: DecisionNode): void;
+  /** Phase 7.1: adds a decision edge to the graph. Validates and persists. */
+  addDecisionEdge(edge: DecisionEdge): void;
+  /** Phase 7.1: returns a copy of the current decision graph. */
+  getDecisionGraph(): DecisionGraph;
+  /** Phase 7.1: returns the transitive subgraph reachable from startNodeId. */
+  getDecisionSubgraph(startNodeId: string): DecisionGraph;
+  /** Phase 7.1: links a decision to a contract (adds contract to affectedContracts). */
+  linkDecisionToContract(decisionId: string, contractId: string): boolean;
+  /** Phase 7.1: links a decision to a code reference. */
+  linkDecisionToCode(decisionId: string, codeRef: string): boolean;
 }
 
 /** Opens the blackboard state file, failing safe on any read problem. */
 export function openBlackboard(filePath: string): Blackboard {
-  const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage } = loadContracts(filePath);
+  const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage, decisions: loadedDecisions } = loadContracts(filePath);
   const contracts = new Map(loadedContracts.map((contract) => [contract.id, contract] as const));
   let lease: LeaseInfo | undefined = loadedLease;
   let fenceCounter = lastFence;
   const nodes = new Map(loadedNodes.map((node) => [node.nodeId, node] as const));
   const usage = new Map(Object.entries(loadedUsage));
+  let decisions: DecisionGraph = loadedDecisions ?? { nodes: [], edges: [] };
 
   /**
    * Merges the on-disk state into the in-memory maps under the write lock,
@@ -460,6 +494,10 @@ export function openBlackboard(filePath: string): Blackboard {
       const local = usage.get(contractId);
       if (!local || diskUsage.events > local.events) usage.set(contractId, diskUsage);
     }
+    // Decisions: merge by taking the side with more nodes (more complete graph)
+    if (disk.decisions && disk.decisions.nodes.length > (decisions?.nodes.length ?? 0)) {
+      decisions = disk.decisions;
+    }
   };
 
   /** Acquire exclusive write lock, merge disk state, run fn, rescue concurrent writes, persist. */
@@ -490,6 +528,7 @@ export function openBlackboard(filePath: string): Blackboard {
         nodes: [...nodes.values()],
         lastFence: fenceCounter,
         usage: Object.fromEntries(usage),
+        decisions,
       };
       mkdirSync(dirname(filePath), { recursive: true });
       const tmpPath = `${filePath}.tmp`;
@@ -745,7 +784,7 @@ export function openBlackboard(filePath: string): Blackboard {
       });
     },
     refresh: () => {
-      const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage } = loadContracts(filePath);
+      const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage, decisions: loadedDecisions } = loadContracts(filePath);
       contracts.clear();
       for (const contract of loadedContracts) {
         contracts.set(contract.id, contract);
@@ -760,6 +799,7 @@ export function openBlackboard(filePath: string): Blackboard {
       for (const [contractId, contractUsage] of Object.entries(loadedUsage)) {
         usage.set(contractId, contractUsage);
       }
+      decisions = loadedDecisions ?? { nodes: [], edges: [] };
     },
     recordUsage: ({ contractId, nodeId, sample }) => {
       withWriteLock(() => {
@@ -881,6 +921,77 @@ export function openBlackboard(filePath: string): Blackboard {
         // Note: we intentionally do NOT call copyContract here to avoid
         // mutating the returned object; the caller gets the updated status.
         return { paused: false };
+      });
+    },
+    // Phase 7.1: Decision graph methods
+    addDecision: (node: DecisionNode) => {
+      withWriteLock(() => {
+        if (!validateDecisionNode(node)) {
+          throw new Error("Invalid DecisionNode");
+        }
+        if (!decisions) decisions = { nodes: [], edges: [] };
+        if (decisions.nodes.some((n) => n.id === node.id)) {
+          throw new Error(`DecisionNode with id ${node.id} already exists`);
+        }
+        decisions.nodes.push(node);
+      });
+    },
+    addDecisionEdge: (edge: DecisionEdge) => {
+      withWriteLock(() => {
+        const nodeIds = new Set(decisions?.nodes.map((n) => n.id) ?? []);
+        if (!validateDecisionEdge(edge, nodeIds)) {
+          throw new Error("Invalid DecisionEdge or references non-existent nodes");
+        }
+        if (!decisions) decisions = { nodes: [], edges: [] };
+        if (decisions.edges.some((e) => e.from === edge.from && e.to === edge.to && e.type === edge.type)) {
+          throw new Error("Duplicate DecisionEdge");
+        }
+        decisions.edges.push(edge);
+      });
+    },
+    getDecisionGraph: (): DecisionGraph => {
+      return decisions ? { nodes: [...decisions.nodes], edges: [...decisions.edges] } : { nodes: [], edges: [] };
+    },
+    getDecisionSubgraph: (startNodeId: string): DecisionGraph => {
+      if (!decisions || !decisions.nodes.some((n) => n.id === startNodeId)) {
+        throw new Error(`Start node ${startNodeId} not found in graph`);
+      }
+      const visited = new Set<string>();
+      const relevantEdges: DecisionEdge[] = [];
+      const dfs = (nodeId: string) => {
+        if (visited.has(nodeId)) return;
+        visited.add(nodeId);
+        for (const edge of decisions!.edges) {
+          if (edge.from === nodeId) {
+            relevantEdges.push(edge);
+            dfs(edge.to);
+          }
+        }
+      };
+      dfs(startNodeId);
+      const relevantNodes = decisions!.nodes.filter((n) => visited.has(n.id));
+      return { nodes: relevantNodes, edges: relevantEdges };
+    },
+    linkDecisionToContract: (decisionId: string, contractId: string): boolean => {
+      return withWriteLock(() => {
+        if (!decisions) decisions = { nodes: [], edges: [] };
+        const decision = decisions.nodes.find((n) => n.id === decisionId);
+        if (!decision) return false;
+        if (!decision.affectedContracts.includes(contractId)) {
+          decision.affectedContracts.push(contractId);
+        }
+        return true;
+      });
+    },
+    linkDecisionToCode: (decisionId: string, codeRef: string): boolean => {
+      return withWriteLock(() => {
+        if (!decisions) decisions = { nodes: [], edges: [] };
+        const decision = decisions.nodes.find((n) => n.id === decisionId);
+        if (!decision) return false;
+        if (!decision.codeRefs.includes(codeRef)) {
+          decision.codeRefs.push(codeRef);
+        }
+        return true;
       });
     },
   };

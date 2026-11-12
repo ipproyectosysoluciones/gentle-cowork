@@ -1638,3 +1638,201 @@ describe("blackboard — Phase 6.4: atomic guard evaluation + assignment (TOCTOU
     }
   });
 });
+
+// ============================================================================
+// Phase 7.1 — Architectural Memory Integration Tests
+// ============================================================================
+
+describe("Phase 7.1 — Architectural Memory integration with Blackboard", () => {
+  const guardConfig = { modelCalls: { enabled: true, threshold: 0.8 }, tokens: { enabled: true, threshold: 0.8 }, wallTime: { enabled: true, threshold: 0.8 } };
+
+  it("adds a decision, persists it, and survives reopen (migration v3→v4)", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Add a decision
+      const decision = {
+        id: "dec-1",
+        title: "Use JSON schema for ProjectContract",
+        state: "accepted" as const,
+        justification: "Versioned schema with migration matches blackboard pattern",
+        affectedContracts: ["gc-1"],
+        codeRefs: ["src/contract/schema.ts:1"],
+        timestamp: new Date().toISOString(),
+        author: "owner",
+      };
+      board.addDecision(decision);
+
+      // Verify it's there
+      const graph = board.getDecisionGraph();
+      expect(graph.nodes).toHaveLength(1);
+      expect(graph.nodes[0].id).toBe("dec-1");
+      expect(graph.nodes[0].state).toBe("accepted");
+
+      // Reopen (simulates daemon restart) — should migrate v3→v4 and preserve decisions
+      const board2 = openBlackboard(filePath);
+      const graph2 = board2.getDecisionGraph();
+      expect(graph2.nodes).toHaveLength(1);
+      expect(graph2.nodes[0].id).toBe("dec-1");
+      expect(graph2.nodes[0].title).toBe("Use JSON schema for ProjectContract");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adds edge and retrieves transitive subgraph", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Add three decisions: dec-1 (base), dec-2 (depends on dec-1), dec-3 (depends on dec-2)
+      board.addDecision({ id: "dec-1", title: "Base decision", state: "accepted", justification: "j1", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addDecision({ id: "dec-2", title: "Child decision", state: "proposed", justification: "j2", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addDecision({ id: "dec-3", title: "Grandchild decision", state: "proposed", justification: "j3", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      board.addDecisionEdge({ from: "dec-2", to: "dec-1", type: "depends_on" });
+      board.addDecisionEdge({ from: "dec-3", to: "dec-2", type: "depends_on" });
+
+      // Get subgraph from dec-3 (should include dec-3, dec-2, dec-1)
+      const subgraph = board.getDecisionSubgraph("dec-3");
+      expect(subgraph.nodes.map(n => n.id).sort()).toEqual(["dec-1", "dec-2", "dec-3"]);
+      expect(subgraph.edges).toHaveLength(2);
+
+      // Get subgraph from dec-2 (should include dec-2, dec-1)
+      const subgraph2 = board.getDecisionSubgraph("dec-2");
+      expect(subgraph2.nodes.map(n => n.id).sort()).toEqual(["dec-1", "dec-2"]);
+      expect(subgraph2.edges).toHaveLength(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("links decision to contract and code reference", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Add a contract first
+      const lease = board.acquireLease("master-1")!;
+      board.putContract(makeContract({ id: "gc-1" }), lease.fence);
+      board.releaseLease("master-1", lease.fence);
+
+      // Add decision
+      board.addDecision({ id: "dec-1", title: "Schema decision", state: "accepted", justification: "j1", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      // Link to contract
+      const linked1 = board.linkDecisionToContract("dec-1", "gc-1");
+      expect(linked1).toBe(true);
+
+      // Link to code ref
+      const linked2 = board.linkDecisionToCode("dec-1", "src/contract/schema.ts:42");
+      expect(linked2).toBe(true);
+
+      // Verify links persisted after reopen
+      const board2 = openBlackboard(filePath);
+      const graph = board2.getDecisionGraph();
+      const node = graph.nodes.find(n => n.id === "dec-1")!;
+      expect(node.affectedContracts).toContain("gc-1");
+      expect(node.codeRefs).toContain("src/contract/schema.ts:42");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate decision id", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addDecision({ id: "dec-1", title: "Decision 1", state: "accepted", justification: "j1", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      expect(() => board.addDecision({ id: "dec-1", title: "Decision 1 dup", state: "proposed", justification: "j2", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" })).toThrow(/already exists/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate edge", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addDecision({ id: "dec-1", title: "Decision 1", state: "accepted", justification: "j1", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addDecision({ id: "dec-2", title: "Decision 2", state: "proposed", justification: "j2", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addDecisionEdge({ from: "dec-1", to: "dec-2", type: "depends_on" });
+
+      expect(() => board.addDecisionEdge({ from: "dec-1", to: "dec-2", type: "depends_on" })).toThrow(/Duplicate/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects edge referencing non-existent node", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addDecision({ id: "dec-1", title: "Decision 1", state: "accepted", justification: "j1", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      expect(() => board.addDecisionEdge({ from: "dec-999", to: "dec-1", type: "depends_on" })).toThrow();
+      expect(() => board.addDecisionEdge({ from: "dec-1", to: "dec-999", type: "depends_on" })).toThrow();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("handles empty graph gracefully", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      expect(board.getDecisionGraph()).toEqual({ nodes: [], edges: [] });
+      expect(() => board.getDecisionSubgraph("nonexistent")).toThrow(/not found/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("decision graph survives migration from v3 file (no decisions field)", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      // Ensure directory exists
+      mkdirSync(dirname(filePath), { recursive: true });
+      // Write a v3 state file manually (no decisions field)
+      const v3State = {
+        version: 3,
+        contracts: [makeContract({ id: "gc-1" })],
+        lease: undefined,
+        nodes: [],
+        lastFence: 0,
+        usage: {},
+      };
+      writeFileSync(filePath, JSON.stringify(v3State, null, 2), "utf8");
+
+      // Open should migrate to v4 with empty decisions
+      const board = openBlackboard(filePath);
+      expect(board.getDecisionGraph()).toEqual({ nodes: [], edges: [] });
+
+      // Add a decision after migration
+      board.addDecision({ id: "dec-1", title: "Post-migration decision", state: "accepted", justification: "j1", affectedContracts: ["gc-1"], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      // Reopen and verify
+      const board2 = openBlackboard(filePath);
+      const graph = board2.getDecisionGraph();
+      expect(graph.nodes).toHaveLength(1);
+      expect(graph.nodes[0].id).toBe("dec-1");
+      expect(graph.nodes[0].affectedContracts).toContain("gc-1");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

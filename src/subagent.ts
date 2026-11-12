@@ -303,6 +303,26 @@ export async function runSubagentTurn(
     await waitUntilReady(rpc);
     await (rpc as any).promptAndWait(prompt, undefined, timeoutMs);
     raw = await rpc.getLastAssistantText();
+  } catch (error) {
+    // Enhance error message for common API issues
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("credit balance is too low") || message.includes("insufficient credits") || message.includes("billing")) {
+      throw new SubagentProtocolError(
+        `gentle-cowork: subagent LLM call failed - insufficient API credits. ` +
+        `Configure your API key and ensure billing is set up in your provider (Anthropic/OpenAI/NVIDIA). ` +
+        `Original error: ${message}`,
+        ""
+      );
+    }
+    if (message.includes("timeout") || message.includes("ETIMEDOUT")) {
+      throw new SubagentProtocolError(
+        `gentle-cowork: subagent timed out waiting for LLM response. ` +
+        `Check network connectivity and API provider status. ` +
+        `Original error: ${message}`,
+        ""
+      );
+    }
+    throw error;
   } finally {
     await rpc.stop();
   }

@@ -1,6 +1,6 @@
 {
   "name": "gentle-cowork",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Orchestration extension for Pi/gentle-shell: structured multi-role delegation that respects ODD.",
   "type": "module",
   "main": "src/gentle-cowork.ts",
@@ -47,11 +47,21 @@
     "typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@earendil-works/pi-ai": { "optional": true },
-    "@earendil-works/pi-agent-core": { "optional": true },
-    "@earendil-works/pi-tui": { "optional": true },
-    "typebox": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   },
   "files": [
     "src",

@@ -1,0 +1,12 @@
+   {
+     "autonomousMode": false,
+     "guardedCommands": {
+       "cowork": "confirm",
+       "cowork-contract": "confirm",
+       "cowork-verify": "confirm",
+       "cowork-chain": "confirm",
+       "cowork-dogfood": "confirm",
+       "cowork-dashboard": "confirm"
+     }
+   }
+   EOF

@@ -6,15 +6,27 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import WebSocket from "ws";
+import https from "https";
+import fs from "fs";
+import path from "path";
 
 // Test utilities
 const WS_PORT = 4322; // Different port to avoid conflicts
 const WS_BIND = "127.0.0.1";
-const WS_URL = `ws://${WS_BIND}:${WS_PORT}`;
+const WS_URL = `wss://${WS_BIND}:${WS_PORT}`;
+
+// Load CA cert for self-signed certificate validation
+let caCert: string;
+let httpsAgent: https.Agent;
+
+function loadCA() {
+	caCert = fs.readFileSync(path.join(__dirname, "..", "..", "ca.pem"), "utf8");
+	httpsAgent = new https.Agent({ ca: caCert, rejectUnauthorized: false });
+}
 
 function connectWS(options = {}): Promise<WebSocket> {
 	return new Promise((resolve, reject) => {
-		const ws = new WebSocket(WS_URL, options);
+		const ws = new WebSocket(WS_URL, { ...options, agent: httpsAgent });
 		ws.on("open", () => resolve(ws));
 		ws.on("error", reject);
 		const timeout = setTimeout(() => reject(new Error("WS connection timeout")), 5000);
@@ -39,7 +51,7 @@ function waitForMessage(ws: WebSocket, type: string, timeoutMs = 5000): Promise<
 		ws.on("message", (data) => {
 			try {
 				const msg = JSON.parse(data.toString());
-                if (msg.type === type) {
+				if (msg.type === type) {
 					clearTimeout(timeout);
 					resolve(msg);
 				}
@@ -59,10 +71,12 @@ let serverModule: { startServer: () => Promise<any>; stopServer: () => Promise<v
 describe("T5.7 Zero-Trust - Happy Path Tests", () => {
 	beforeAll(async () => {
 		// Set the port for this test
-		process.env.TEST_PORT = '4322';
+		process.env.TEST_PORT = "4322";
 		// Dynamic import to allow server code to be written after tests
 		serverModule = await import("./server.ts");
-		server = await serverModule.startServer();
+		await serverModule.startServer();
+		// Load CA cert AFTER server starts (server writes ca.pem)
+		loadCA();
 	});
 
 	afterAll(async () => {
@@ -108,8 +122,8 @@ describe("T5.7 Zero-Trust - Happy Path Tests", () => {
 			expect(implementerWelcome.type).toBe("welcome");
 
 			// Planner sends AssignStep
-			const assignStepMsg = { 
-				type: "assign_step", 
+			const assignStepMsg = {
+				type: "assign_step",
 				contractId: "gc-test-1",
 				workerNodeId: "test-implementer-1",
 				stepId: "step-1",
@@ -151,8 +165,8 @@ describe("T5.7 Zero-Trust - Happy Path Tests", () => {
 			expect(verifierWelcome.type).toBe("welcome");
 
 			// First, planner assigns a step to implementer
-			const assignStepMsg = { 
-				type: "assign_step", 
+			const assignStepMsg = {
+				type: "assign_step",
 				contractId: "gc-test-2",
 				workerNodeId: "test-implementer-2",
 				stepId: "step-2",
@@ -163,7 +177,7 @@ describe("T5.7 Zero-Trust - Happy Path Tests", () => {
 			expect(implementerAssignStep.type).toBe("assign_step");
 
 			// Implementer sends StepResult
-			const stepResultMsg = { 
+			const stepResultMsg = {
 				type: "step_result",
 				contractId: "gc-test-2",
 				workerNodeId: "test-implementer-2",
@@ -208,8 +222,8 @@ describe("T5.7 Zero-Trust - Happy Path Tests", () => {
 			expect(verifierWelcome.type).toBe("welcome");
 
 			// First, planner assigns a step to implementer
-			const assignStepMsg = { 
-				type: "assign_step", 
+			const assignStepMsg = {
+				type: "assign_step",
 				contractId: "gc-test-3",
 				workerNodeId: "test-implementer-3",
 				stepId: "step-3",
@@ -220,7 +234,7 @@ describe("T5.7 Zero-Trust - Happy Path Tests", () => {
 			expect(implementerAssignStep.type).toBe("assign_step");
 
 			// Implementer sends StepResult
-			const stepResultMsg = { 
+			const stepResultMsg = {
 				type: "step_result",
 				contractId: "gc-test-3",
 				workerNodeId: "test-implementer-3",
@@ -245,9 +259,9 @@ describe("T5.7 Zero-Trust - Happy Path Tests", () => {
 	describe("Happy Path: Lease management", () => {
 		it("should grant lease to allowed worker", async () => {
 			const ws = await connectWS();
-			const leaseReq = { 
-				type: "lease_request", 
-				nodeId: "test-worker-lease", 
+			const leaseReq = {
+				type: "lease_request",
+				nodeId: "test-worker-lease",
 				role: "worker",
 				ttlMs: 30000
 			};

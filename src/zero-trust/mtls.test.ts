@@ -14,15 +14,27 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import WebSocket from "ws";
+import https from "https";
+import fs from "fs";
+import path from "path";
 
 // Test utilities
 const WS_PORT = 4320; // Different port to avoid conflicts
 const WS_BIND = "127.0.0.1";
-const WS_URL = `ws://${WS_BIND}:${WS_PORT}`;
+const WS_URL = `wss://${WS_BIND}:${WS_PORT}`;
+
+// Load CA cert for self-signed certificate validation
+let caCert: string;
+let httpsAgent: https.Agent;
+
+function loadCA() {
+	caCert = fs.readFileSync(path.join(__dirname, "..", "..", "ca.pem"), "utf8");
+	httpsAgent = new https.Agent({ ca: caCert, rejectUnauthorized: false });
+}
 
 function connectWS(options = {}): Promise<WebSocket> {
 	return new Promise((resolve, reject) => {
-		const ws = new WebSocket(WS_URL, options);
+		const ws = new WebSocket(WS_URL, { ...options, agent: httpsAgent });
 		ws.on("open", () => resolve(ws));
 		ws.on("error", reject);
 		const timeout = setTimeout(() => reject(new Error("WS connection timeout")), 5000);
@@ -56,9 +68,11 @@ describe("T5.7 Zero-Trust - Protocol-Level Attack Tests", () => {
 	beforeAll(async () => {
 		// Set the port for this test
 		process.env.TEST_PORT = "4320";
-		const mod = await import("./server.ts");
-		serverModule = mod;
-		await mod.startServer();
+		// Dynamic import to allow server code to be written after tests
+		serverModule = await import("./server.ts");
+		await serverModule.startServer();
+		// Load CA cert AFTER server starts (server writes ca.pem)
+		loadCA();
 	});
 
 	afterAll(async () => {

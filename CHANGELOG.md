@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > through conventional commits (`feat` → minor, `fix` → patch, breaking changes →
 > major; `docs`/`chore` never trigger a release) and the automation records them.
 
+## [1.2.1](https://github.com/ipproyectosysoluciones/gentle-cowork/compare/v1.2.0...v1.2.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **subagent:** enhance error messages for API credits/timeout failures ([a1fb859](https://github.com/ipproyectosysoluciones/gentle-cowork/commit/a1fb8590319a1a2833bfcfcc392d445a05177ad0))
+* **zero-trust:** add HTTP responses for admin API mutating endpoints ([a20d450](https://github.com/ipproyectosysoluciones/gentle-cowork/commit/a20d450174b003bd34454f28c2ff4b80fa736859))
+
 ## [1.2.0](https://github.com/ipproyectosysoluciones/gentle-cowork/compare/v1.1.0...v1.2.0) (2026-11-12)
 
 

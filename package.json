@@ -1,6 +1,6 @@
 {
   "name": "gentle-cowork",
-  "version": "1.2.2",
+  "version": "1.2.1",
   "description": "Orchestration extension for Pi/gentle-shell: structured multi-role delegation that respects ODD.",
   "type": "module",
   "main": "src/gentle-cowork.ts",

@@ -1728,7 +1728,9 @@ describe("Phase 7.1 — Architectural Memory integration with Blackboard", () =>
       const linked1 = board.linkDecisionToContract("dec-1", "gc-1");
       expect(linked1).toBe(true);
 
-      // Link to code ref
+      // Link to code ref - create the file first for traceability
+      mkdirSync(join(tmp, "src/contract"), { recursive: true });
+      writeFileSync(join(tmp, "src/contract/schema.ts"), "export interface Schema {}", "utf8");
       const linked2 = board.linkDecisionToCode("dec-1", "src/contract/schema.ts:42");
       expect(linked2).toBe(true);
 

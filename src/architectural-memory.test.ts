@@ -14,7 +14,11 @@ import {
   validateDecisionNode,
   validateDecisionEdge,
   validateDecisionGraph,
+  validateDecisionState,
+  createDecisionNode,
+  createDecisionEdge,
   migrateBlackboardStateV3toV4,
+  getDecisionGraphValidationErrors,
   type BlackboardStateV3,
   type BlackboardStateV4,
 } from "./architectural-memory.ts";
@@ -187,8 +191,26 @@ describe("DecisionState", () => {
   };
 
   it("accepts valid decision state", () => {
-    // Will implement validation in DecisionState
-    expect(true).toBe(true); // placeholder
+    const state: DecisionState = {
+      decisions: {
+        nodes: [
+          { id: "dec-1", title: "Decision 1", state: "accepted", justification: "j1", affectedContracts: [], codeRefs: [], timestamp: "2026-11-12T10:00:00.000Z", author: "owner" },
+        ],
+        edges: [],
+      },
+      version: 4,
+    };
+    expect(validateDecisionState(state)).toBe(true);
+  });
+
+  it("rejects decision state with wrong version", () => {
+    const state = { decisions: { nodes: [], edges: [] }, version: 3 };
+    expect(validateDecisionState(state)).toBe(false);
+  });
+
+  it("rejects decision state with invalid graph", () => {
+    const state = { decisions: { nodes: [{ id: "" }], edges: [] }, version: 4 };
+    expect(validateDecisionState(state)).toBe(false);
   });
 });
 
@@ -245,14 +267,46 @@ describe("BlackboardState v3→v4 Migration", () => {
 
 describe("DecisionNode helpers", () => {
   it("creates a minimal valid node", () => {
-    // Will test factory function when implemented
-    expect(true).toBe(true); // placeholder
+    const node = createDecisionNode({
+      id: "dec-1",
+      title: "Test Decision",
+      state: "accepted",
+      justification: "Test justification",
+      author: "owner",
+    });
+    expect(node.id).toBe("dec-1");
+    expect(node.state).toBe("accepted");
+    expect(validateDecisionNode(node)).toBe(true);
+  });
+
+  it("rejects node with empty title", () => {
+    expect(() => createDecisionNode({
+      id: "dec-1",
+      title: "",
+      state: "accepted",
+      justification: "Test",
+      author: "owner",
+    })).toThrow();
   });
 });
 
 describe("DecisionEdge helpers", () => {
   it("creates a valid edge", () => {
-    // Will test factory function when implemented
-    expect(true).toBe(true); // placeholder
+    const edge = createDecisionEdge({
+      from: "dec-1",
+      to: "dec-2",
+      type: "depends_on",
+    });
+    expect(edge.from).toBe("dec-1");
+    expect(edge.to).toBe("dec-2");
+    expect(validateDecisionEdge(edge)).toBe(true);
+  });
+
+  it("rejects self-loop edge", () => {
+    expect(() => createDecisionEdge({
+      from: "dec-1",
+      to: "dec-1",
+      type: "depends_on",
+    })).toThrow();
   });
 });

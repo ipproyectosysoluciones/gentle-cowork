@@ -14,6 +14,10 @@ export type DecisionStateValue = "proposed" | "accepted" | "rejected" | "superse
 /** Valid edge types in the decision graph. */
 export type DecisionEdgeType = "depends_on" | "supersedes" | "blocks" | "relates_to";
 
+/** Shared constants for validation - single source of truth. */
+export const VALID_DECISION_STATES: readonly DecisionStateValue[] = ["proposed", "accepted", "rejected", "superseded"] as const;
+export const VALID_EDGE_TYPES: readonly DecisionEdgeType[] = ["depends_on", "supersedes", "blocks", "relates_to"] as const;
+
 /** A node in the decision graph. */
 export interface DecisionNode {
   /** Unique identifier (e.g., "dec-1", "dec-abc123"). */
@@ -94,14 +98,15 @@ export function validateDecisionNode(node: unknown): node is DecisionNode {
   if (typeof n.author !== "string" || n.author.length === 0) return false;
 
   // State must be one of the valid values
-  const validStates: DecisionStateValue[] = ["proposed", "accepted", "rejected", "superseded"];
-  if (typeof n.state !== "string" || !validStates.includes(n.state as DecisionStateValue)) return false;
+  if (typeof n.state !== "string" || !VALID_DECISION_STATES.includes(n.state as DecisionStateValue)) return false;
 
   // Arrays
   if (!Array.isArray(n.affectedContracts) || !n.affectedContracts.every((x) => typeof x === "string")) return false;
   if (!Array.isArray(n.codeRefs) || !n.codeRefs.every((x) => typeof x === "string")) return false;
 
-  // Timestamp format validation (ISO 8601)
+  // Timestamp format validation (strict ISO 8601: YYYY-MM-DDTHH:mm:ss.sssZ)
+  const iso8601Regex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+  if (!iso8601Regex.test(n.timestamp)) return false;
   const ts = new Date(n.timestamp);
   if (isNaN(ts.getTime())) return false;
 
@@ -117,8 +122,7 @@ export function validateDecisionEdge(edge: unknown, existingNodeIds?: ReadonlySe
   if (typeof e.to !== "string" || e.to.length === 0) return false;
   if (e.from === e.to) return false; // no self-loops
 
-  const validTypes: DecisionEdgeType[] = ["depends_on", "supersedes", "blocks", "relates_to"];
-  if (typeof e.type !== "string" || !validTypes.includes(e.type as DecisionEdgeType)) return false;
+  if (typeof e.type !== "string" || !VALID_EDGE_TYPES.includes(e.type as DecisionEdgeType)) return false;
 
   // If node IDs provided, verify they exist
   if (existingNodeIds && (!existingNodeIds.has(e.from) || !existingNodeIds.has(e.to))) {
@@ -247,6 +251,54 @@ export function validateDecisionState(state: unknown): state is DecisionState {
 }
 
 /** Creates an empty DecisionGraph. */
+/** Returns detailed validation errors for a DecisionGraph (empty array = valid). */
+export function getDecisionGraphValidationErrors(graph: unknown): string[] {
+  const errors: string[] = [];
+  if (typeof graph !== "object" || graph === null) {
+    errors.push("DecisionGraph is not an object");
+    return errors;
+  }
+  const g = graph as Record<string, unknown>;
+
+  if (!Array.isArray(g.nodes)) {
+    errors.push("nodes is not an array");
+  } else {
+    const nodeIds = new Set<string>();
+    g.nodes.forEach((node: unknown, i: number) => {
+      if (!validateDecisionNode(node)) {
+        errors.push(`node[${i}] failed validation`);
+      } else {
+        const n = node as DecisionNode;
+        if (nodeIds.has(n.id)) {
+          errors.push(`duplicate node id: ${n.id}`);
+        }
+        nodeIds.add(n.id);
+      }
+    });
+  }
+
+  if (!Array.isArray(g.edges)) {
+    errors.push("edges is not an array");
+  } else {
+    const edgeKeys = new Set<string>();
+    const nodeIds = new Set((g.nodes as DecisionNode[] ?? []).map((n) => n.id));
+    g.edges.forEach((edge: unknown, i: number) => {
+      if (!validateDecisionEdge(edge, nodeIds)) {
+        errors.push(`edge[${i}] failed validation or references non-existent nodes`);
+      } else {
+        const e = edge as DecisionEdge;
+        const key = `${e.from}|${e.to}|${e.type}`;
+        if (edgeKeys.has(key)) {
+          errors.push(`duplicate edge: ${key}`);
+        }
+        edgeKeys.add(key);
+      }
+    });
+  }
+
+  return errors;
+}
+
 export function createEmptyDecisionGraph(): DecisionGraph {
   return { nodes: [], edges: [] };
 }

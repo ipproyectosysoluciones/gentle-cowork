@@ -53,6 +53,9 @@ import {
 	validateDecisionGraph,
 	validateDecisionNode,
 	validateDecisionEdge,
+	getDecisionSubgraph,
+	getDecisionGraphValidationErrors,
+	wouldCreateCycle,
 } from "./architectural-memory.ts";
 
 /** Directory (inside the project cwd) holding the blackboard state file. */
@@ -301,10 +304,13 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
 
     // Validate decisions if present
     let decisions: DecisionGraph = { nodes: [], edges: [] };
-    if (parsed.decisions && validateDecisionGraph(parsed.decisions)) {
-      decisions = parsed.decisions;
-    } else if (parsed.decisions) {
-      console.error(`[gentle-cowork] blackboard decisions malformed at ${filePath}, starting empty`);
+    if (parsed.decisions) {
+      const validationErrors = getDecisionGraphValidationErrors(parsed.decisions);
+      if (validationErrors.length === 0) {
+        decisions = parsed.decisions;
+      } else {
+        console.error(`[gentle-cowork] blackboard decisions malformed at ${filePath}: ${validationErrors.join('; ')}, starting empty`);
+      }
     }
 
     return {
@@ -494,9 +500,17 @@ export function openBlackboard(filePath: string): Blackboard {
       const local = usage.get(contractId);
       if (!local || diskUsage.events > local.events) usage.set(contractId, diskUsage);
     }
-    // Decisions: merge by taking the side with more nodes (more complete graph)
-    if (disk.decisions && disk.decisions.nodes.length > (decisions?.nodes.length ?? 0)) {
-      decisions = disk.decisions;
+    // Decisions: merge by taking the side with more complete graph (nodes + edges)
+    // Also consider that a graph with same node count but more edges is more complete
+    if (disk.decisions) {
+      const localCompleteness = (decisions?.nodes.length ?? 0) + (decisions?.edges.length ?? 0);
+      const diskCompleteness = disk.decisions.nodes.length + disk.decisions.edges.length;
+      if (diskCompleteness > localCompleteness) {
+        decisions = disk.decisions;
+      } else if (diskCompleteness === localCompleteness && disk.decisions.edges.length > (decisions?.edges.length ?? 0)) {
+        // Tie-breaker: more edges wins
+        decisions = disk.decisions;
+      }
     }
   };
 
@@ -946,6 +960,11 @@ export function openBlackboard(filePath: string): Blackboard {
         if (decisions.edges.some((e) => e.from === edge.from && e.to === edge.to && e.type === edge.type)) {
           throw new Error("Duplicate DecisionEdge");
         }
+        // Enforce cycle detection (spec S3: depends_on must not create cycles)
+        const testGraph = { nodes: [...decisions.nodes], edges: [...decisions.edges, edge] };
+        if (wouldCreateCycle(testGraph, edge)) {
+          throw new Error(`Adding this edge would create a cycle: ${edge.from} -> ${edge.to}`);
+        }
         decisions.edges.push(edge);
       });
     },
@@ -953,30 +972,18 @@ export function openBlackboard(filePath: string): Blackboard {
       return decisions ? { nodes: [...decisions.nodes], edges: [...decisions.edges] } : { nodes: [], edges: [] };
     },
     getDecisionSubgraph: (startNodeId: string): DecisionGraph => {
-      if (!decisions || !decisions.nodes.some((n) => n.id === startNodeId)) {
-        throw new Error(`Start node ${startNodeId} not found in graph`);
-      }
-      const visited = new Set<string>();
-      const relevantEdges: DecisionEdge[] = [];
-      const dfs = (nodeId: string) => {
-        if (visited.has(nodeId)) return;
-        visited.add(nodeId);
-        for (const edge of decisions!.edges) {
-          if (edge.from === nodeId) {
-            relevantEdges.push(edge);
-            dfs(edge.to);
-          }
-        }
-      };
-      dfs(startNodeId);
-      const relevantNodes = decisions!.nodes.filter((n) => visited.has(n.id));
-      return { nodes: relevantNodes, edges: relevantEdges };
+      const graph = decisions ?? { nodes: [], edges: [] };
+      return getDecisionSubgraph(graph, startNodeId);
     },
     linkDecisionToContract: (decisionId: string, contractId: string): boolean => {
       return withWriteLock(() => {
         if (!decisions) decisions = { nodes: [], edges: [] };
         const decision = decisions.nodes.find((n) => n.id === decisionId);
-        if (!decision) return false;
+        if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+        // Fail-closed: validate that the referenced contract exists (spec S3)
+        if (!contracts.has(contractId)) {
+          throw new Error(`Referenced contract does not exist: ${contractId}`);
+        }
         if (!decision.affectedContracts.includes(contractId)) {
           decision.affectedContracts.push(contractId);
         }
@@ -987,7 +994,20 @@ export function openBlackboard(filePath: string): Blackboard {
       return withWriteLock(() => {
         if (!decisions) decisions = { nodes: [], edges: [] };
         const decision = decisions.nodes.find((n) => n.id === decisionId);
-        if (!decision) return false;
+        if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+        // Fail-closed: validate that the code reference is traceable (spec S3)
+        // Format: file:line or file:symbol - must exist
+        const codeRefPattern = /^[a-zA-Z0-9_\-./]+:(?:[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*)$/;
+        if (!codeRefPattern.test(codeRef)) {
+          throw new Error(`Invalid code reference format (expected file:line or file:symbol): ${codeRef}`);
+        }
+        const [relPath] = codeRef.split(':');
+        const fullPath = join(dirname(filePath), '..', relPath);
+        try {
+          readFileSync(fullPath, 'utf8');
+        } catch {
+          throw new Error(`Code reference not traceable (file does not exist): ${codeRef}`);
+        }
         if (!decision.codeRefs.includes(codeRef)) {
           decision.codeRefs.push(codeRef);
         }

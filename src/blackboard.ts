@@ -57,6 +57,20 @@ import {
 	getDecisionGraphValidationErrors,
 	wouldCreateCycle,
 } from "./architectural-memory.ts";
+import {
+	type TechDebtGraph,
+	type TechDebtNode,
+	type TechDebtEdge,
+	type TechDebtState,
+	type DebtState,
+	type DebtSeverity,
+	validateTechDebtGraph,
+	validateTechDebtNode,
+	validateTechDebtEdge,
+	getTechDebtSubgraph,
+	getTechDebtGraphValidationErrors,
+	wouldCreateTechDebtCycle,
+} from "./tech-debt.ts";
 
 /** Directory (inside the project cwd) holding the blackboard state file. */
 export const BLACKBOARD_DIR = ".gentle-cowork";
@@ -65,7 +79,7 @@ export const BLACKBOARD_DIR = ".gentle-cowork";
 export const BLACKBOARD_FILENAME = "blackboard.json";
 
 /** Current state file format version. */
-export const STATE_VERSION = 4;
+export const STATE_VERSION = 5;
 
 /** The on-disk shape of the blackboard state file. */
 export interface BlackboardState {
@@ -78,6 +92,8 @@ export interface BlackboardState {
   usage?: Record<string, ContractUsage>;
   /** Phase 7.1: decision graph (v4+). */
   decisions?: DecisionGraph;
+  /** Phase 7.2: tech debt registry (v5+). */
+  techDebt?: TechDebtGraph;
 }
 
 /** Lease information with fencing token. */
@@ -163,14 +179,15 @@ function isTaskContract(value: unknown): value is TaskContract {
 function isBlackboardState(value: unknown): value is BlackboardState {
   if (typeof value !== "object" || value === null) return false;
   const s = value as Record<string, unknown>;
-  // Accept v1 (legacy), v2 (pre-metering), v3 (pre-decisions), and v4 (current) for migration
+  // Accept v1 (legacy), v2 (pre-metering), v3 (pre-decisions), v4 (pre-techDebt), and v5 (current) for migration
   return (
-    (s.version === 1 || s.version === 2 || s.version === 3 || s.version === STATE_VERSION) &&
+    (s.version === 1 || s.version === 2 || s.version === 3 || s.version === 4 || s.version === STATE_VERSION) &&
     Array.isArray(s.contracts) &&
     (s.lease === undefined || typeof s.lease === "object") &&
     (s.nodes === undefined || Array.isArray(s.nodes)) &&
     (s.lastFence === undefined || typeof s.lastFence === "number") &&
-    (s.decisions === undefined || (typeof s.decisions === "object" && s.decisions !== null))
+    (s.decisions === undefined || (typeof s.decisions === "object" && s.decisions !== null)) &&
+    (s.techDebt === undefined || (typeof s.techDebt === "object" && s.techDebt !== null))
   );
 }
 
@@ -264,14 +281,14 @@ function releaseWriteLock(fd: number): void {
  * (or entry-filtered) board; only a missing file is silent — everything
  * else leaves one diagnostic line in the launcher log.
  */
-function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: LeaseInfo; nodes: NodeRegistration[]; lastFence: number; usage: Record<string, ContractUsage>; decisions: DecisionGraph } {
+function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: LeaseInfo; nodes: NodeRegistration[]; lastFence: number; usage: Record<string, ContractUsage>; decisions: DecisionGraph; techDebt: TechDebtGraph } {
   let raw: string;
   try {
     raw = readFileSync(filePath, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] }, techDebt: { nodes: [], edges: [] } };
     console.error(`[gentle-cowork] blackboard unreadable (${filePath}), starting empty: ${errorMessage(error)}`);
-    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] }, techDebt: { nodes: [], edges: [] } };
   }
 
   let parsed: unknown;
@@ -279,7 +296,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
     parsed = JSON.parse(raw);
   } catch (error) {
     console.error(`[gentle-cowork] blackboard corrupt (${filePath}), starting empty: ${errorMessage(error)}`);
-    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] }, techDebt: { nodes: [], edges: [] } };
   }
 
   if (!isBlackboardState(parsed)) {
@@ -287,7 +304,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
       `[gentle-cowork] blackboard has an unrecognized shape (version ${STATE_VERSION} expected) ` +
         `at ${filePath}, starting empty`,
     );
-    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] } };
+    return { contracts: [], nodes: [], lastFence: 0, usage: {}, decisions: { nodes: [], edges: [] }, techDebt: { nodes: [], edges: [] } };
   }
 
   const contracts = parsed.contracts.filter(isTaskContract).map(normalizeContract);
@@ -313,6 +330,17 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
       }
     }
 
+    // Validate techDebt if present (v5+)
+    let techDebt: TechDebtGraph = { nodes: [], edges: [] };
+    if (parsed.techDebt) {
+      const validationErrors = getTechDebtGraphValidationErrors(parsed.techDebt);
+      if (validationErrors.length === 0) {
+        techDebt = parsed.techDebt;
+      } else {
+        console.error(`[gentle-cowork] blackboard techDebt malformed at ${filePath}: ${validationErrors.join('; ')}, starting empty`);
+      }
+    }
+
     return {
       contracts,
       lease: parsed.lease,
@@ -331,6 +359,7 @@ function loadContracts(filePath: string): { contracts: TaskContract[]; lease?: L
       lastFence,
       usage: parseUsage(parsed.usage, filePath),
       decisions,
+      techDebt,
     };
 }
 
@@ -440,17 +469,34 @@ export interface Blackboard {
   linkDecisionToContract(decisionId: string, contractId: string): boolean;
   /** Phase 7.1: links a decision to a code reference. */
   linkDecisionToCode(decisionId: string, codeRef: string): boolean;
+  /** Phase 7.2: adds a tech debt node to the graph. Validates and persists. */
+  addTechDebt(node: TechDebtNode): void;
+  /** Phase 7.2: adds a tech debt edge to the graph. Validates and persists. */
+  addTechDebtEdge(edge: TechDebtEdge): void;
+  /** Phase 7.2: returns a copy of the current tech debt graph. */
+  getTechDebtGraph(): TechDebtGraph;
+  /** Phase 7.2: returns the transitive subgraph reachable from startNodeId. */
+  getTechDebtSubgraph(startNodeId: string): TechDebtGraph;
+  /** Phase 7.2: links a tech debt to a contract (adds contract to affectedContracts). */
+  linkDebtToContract(debtId: string, contractId: string): boolean;
+  /** Phase 7.2: links a tech debt to a code reference. */
+  linkDebtToCode(debtId: string, codeRef: string): boolean;
+  /** Phase 7.2: updates a tech debt's status. */
+  updateDebtStatus(debtId: string, state: DebtState): boolean;
+  /** Phase 7.2: queries tech debt with filters. */
+  queryDebt(filters: { contractId?: string; severity?: DebtSeverity; state?: DebtState }): TechDebtNode[];
 }
 
 /** Opens the blackboard state file, failing safe on any read problem. */
 export function openBlackboard(filePath: string): Blackboard {
-  const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage, decisions: loadedDecisions } = loadContracts(filePath);
+  const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage, decisions: loadedDecisions, techDebt: loadedTechDebt } = loadContracts(filePath);
   const contracts = new Map(loadedContracts.map((contract) => [contract.id, contract] as const));
   let lease: LeaseInfo | undefined = loadedLease;
   let fenceCounter = lastFence;
   const nodes = new Map(loadedNodes.map((node) => [node.nodeId, node] as const));
   const usage = new Map(Object.entries(loadedUsage));
   let decisions: DecisionGraph = loadedDecisions ?? { nodes: [], edges: [] };
+  let techDebt: TechDebtGraph = loadedTechDebt ?? { nodes: [], edges: [] };
 
   /**
    * Merges the on-disk state into the in-memory maps under the write lock,
@@ -512,6 +558,17 @@ export function openBlackboard(filePath: string): Blackboard {
         decisions = disk.decisions;
       }
     }
+    // Tech Debt: merge by taking the side with more complete graph (nodes + edges)
+    if (disk.techDebt) {
+      const localCompleteness = (techDebt?.nodes.length ?? 0) + (techDebt?.edges.length ?? 0);
+      const diskCompleteness = disk.techDebt.nodes.length + disk.techDebt.edges.length;
+      if (diskCompleteness > localCompleteness) {
+        techDebt = disk.techDebt;
+      } else if (diskCompleteness === localCompleteness && disk.techDebt.edges.length > (techDebt?.edges.length ?? 0)) {
+        // Tie-breaker: more edges wins
+        techDebt = disk.techDebt;
+      }
+    }
   };
 
   /** Acquire exclusive write lock, merge disk state, run fn, rescue concurrent writes, persist. */
@@ -543,6 +600,7 @@ export function openBlackboard(filePath: string): Blackboard {
         lastFence: fenceCounter,
         usage: Object.fromEntries(usage),
         decisions,
+        techDebt,
       };
       mkdirSync(dirname(filePath), { recursive: true });
       const tmpPath = `${filePath}.tmp`;
@@ -798,7 +856,7 @@ export function openBlackboard(filePath: string): Blackboard {
       });
     },
     refresh: () => {
-      const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage, decisions: loadedDecisions } = loadContracts(filePath);
+      const { contracts: loadedContracts, lease: loadedLease, nodes: loadedNodes, lastFence, usage: loadedUsage, decisions: loadedDecisions, techDebt: loadedTechDebt } = loadContracts(filePath);
       contracts.clear();
       for (const contract of loadedContracts) {
         contracts.set(contract.id, contract);
@@ -814,6 +872,7 @@ export function openBlackboard(filePath: string): Blackboard {
         usage.set(contractId, contractUsage);
       }
       decisions = loadedDecisions ?? { nodes: [], edges: [] };
+      techDebt = loadedTechDebt ?? { nodes: [], edges: [] };
     },
     recordUsage: ({ contractId, nodeId, sample }) => {
       withWriteLock(() => {
@@ -1011,6 +1070,100 @@ export function openBlackboard(filePath: string): Blackboard {
         if (!decision.codeRefs.includes(codeRef)) {
           decision.codeRefs.push(codeRef);
         }
+        return true;
+      });
+    },
+    // Phase 7.2: Tech Debt Registry methods
+    addTechDebt: (node: TechDebtNode) => {
+      withWriteLock(() => {
+        if (!validateTechDebtNode(node)) {
+          throw new Error("Invalid TechDebtNode");
+        }
+        if (!techDebt) techDebt = { nodes: [], edges: [] };
+        if (techDebt.nodes.some((n) => n.id === node.id)) {
+          throw new Error(`TechDebtNode with id ${node.id} already exists`);
+        }
+        techDebt.nodes.push(node);
+      });
+    },
+    addTechDebtEdge: (edge: TechDebtEdge) => {
+      withWriteLock(() => {
+        const nodeIds = new Set(techDebt?.nodes.map((n) => n.id) ?? []);
+        if (!validateTechDebtEdge(edge, nodeIds)) {
+          throw new Error("Invalid TechDebtEdge or references non-existent nodes");
+        }
+        if (!techDebt) techDebt = { nodes: [], edges: [] };
+        if (techDebt.edges.some((e) => e.from === edge.from && e.to === edge.to && e.type === edge.type)) {
+          throw new Error("Duplicate TechDebtEdge");
+        }
+        // Enforce cycle detection
+        const testGraph = { nodes: [...techDebt.nodes], edges: [...techDebt.edges, edge] };
+        if (wouldCreateTechDebtCycle(testGraph, edge)) {
+          throw new Error(`Adding this edge would create a cycle: ${edge.from} -> ${edge.to}`);
+        }
+        techDebt.edges.push(edge);
+      });
+    },
+    getTechDebtGraph: (): TechDebtGraph => {
+      return techDebt ? { nodes: [...techDebt.nodes], edges: [...techDebt.edges] } : { nodes: [], edges: [] };
+    },
+    getTechDebtSubgraph: (startNodeId: string): TechDebtGraph => {
+      const graph = techDebt ?? { nodes: [], edges: [] };
+      return getTechDebtSubgraph(graph, startNodeId);
+    },
+    linkDebtToContract: (debtId: string, contractId: string): boolean => {
+      return withWriteLock(() => {
+        if (!techDebt) techDebt = { nodes: [], edges: [] };
+        const debt = techDebt.nodes.find((n) => n.id === debtId);
+        if (!debt) throw new Error(`TechDebt not found: ${debtId}`);
+        // Fail-closed: validate that the referenced contract exists
+        if (!contracts.has(contractId)) {
+          throw new Error(`Referenced contract does not exist: ${contractId}`);
+        }
+        if (!debt.affectedContracts.includes(contractId)) {
+          debt.affectedContracts.push(contractId);
+        }
+        return true;
+      });
+    },
+    linkDebtToCode: (debtId: string, codeRef: string): boolean => {
+      return withWriteLock(() => {
+        if (!techDebt) techDebt = { nodes: [], edges: [] };
+        const debt = techDebt.nodes.find((n) => n.id === debtId);
+        if (!debt) throw new Error(`TechDebt not found: ${debtId}`);
+        // Fail-closed: validate that the code reference is traceable
+        const codeRefPattern = /^[a-zA-Z0-9_\-./]+:(?:[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*)$/;
+        if (!codeRefPattern.test(codeRef)) {
+          throw new Error(`Invalid code reference format (expected file:line or file:symbol): ${codeRef}`);
+        }
+        const [relPath] = codeRef.split(':');
+        const fullPath = join(dirname(filePath), '..', relPath);
+        try {
+          readFileSync(fullPath, 'utf8');
+        } catch {
+          throw new Error(`Code reference not traceable (file does not exist): ${codeRef}`);
+        }
+        if (!debt.codeRefs.includes(codeRef)) {
+          debt.codeRefs.push(codeRef);
+        }
+        return true;
+      });
+    },
+    updateDebtStatus: (debtId: string, state: DebtState): boolean => {
+      return withWriteLock(() => {
+        if (!techDebt) techDebt = { nodes: [], edges: [] };
+        const debt = techDebt.nodes.find((n) => n.id === debtId);
+        if (!debt) throw new Error(`TechDebt not found: ${debtId}`);
+        debt.state = state;
+        return true;
+      });
+    },
+    queryDebt: (filters: { contractId?: string; severity?: DebtSeverity; state?: DebtState }): TechDebtNode[] => {
+      if (!techDebt) return [];
+      return techDebt.nodes.filter((node) => {
+        if (filters.contractId && !node.affectedContracts.includes(filters.contractId)) return false;
+        if (filters.severity && node.severity !== filters.severity) return false;
+        if (filters.state && node.state !== filters.state) return false;
         return true;
       });
     },

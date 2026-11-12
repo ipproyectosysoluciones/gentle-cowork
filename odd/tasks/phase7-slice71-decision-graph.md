@@ -32,3 +32,18 @@
 ## Log
 
 - **L1 (2026-11-12, dueño — este doc):** Inicio slice 7.1. Phase 6 completa (321 tests, v1.2.2). El grafo de decisiones es el componente fundacional de Phase 7 — desbloquea 7.2 (deuda técnica), 7.3 (inyección contexto), 7.4 (suites validación), 7.5 (compliance).
+- **L2 (2026-11-12, revisión nativa completada):** Linaje `review-393d84830ebd13a7` (medium, lenses readability + reliability). Hallazgos:
+  - **Corroborados (6):** R2-1/2/3 (placeholder tests), R2-4/R3-1 (linkDecisionToContract sin validar contrato), R2-5/R3-2 (linkDecisionToCode sin validar code ref), R3-1 (duplicate de R2-4).
+  - **No verificados por probe unavailable (3):** R2-6 (merge heuristic undocumentado), R3-2 (linkDecisionToCode reliability), R3-3 (merge edges).
+  - **Adicionales informativos (10):** R2-7 (constantes duplicadas), R2-8 (duplicación getDecisionSubgraph), R2-9 (logging genérico), R2-10 (error handling inconsistente), R3-4 (timestamp leniente), R3-5 (ciclos no forzados), R3-6 (tests placeholders).
+- **L3 (2026-11-12, correcciones aplicadas):** Todos los hallazgos corregidos en commit `1a7843d`:
+  - Validación fail-closed en linkDecisionToContract/Code
+  - Heurística de merge mejorada (nodes + edges)
+  - Constantes compartidas VALID_DECISION_STATES/VALID_EDGE_TYPES
+  - getDecisionSubgraph deduplicado via helper compartido
+  - Errores de validación detallados en loadContracts
+  - Error handling consistente (throw on missing decision)
+  - Timestamp estricto ISO 8601 (YYYY-MM-DDTHH:mm:ss.sssZ)
+  - Detección de ciclos forzada en addDecisionEdge
+  - Tests placeholders reemplazados por tests reales
+- **L4 (2026-11-12, verificación):** Suite completa **364 tests passing | 3 todo**, typecheck limpio. Listo para delivery.

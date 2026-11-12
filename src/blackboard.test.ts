@@ -1838,3 +1838,261 @@ describe("Phase 7.1 — Architectural Memory integration with Blackboard", () =>
     }
   });
 });
+
+// ============================================================================
+// Phase 7.2 — Tech Debt Registry integration with Blackboard
+// ============================================================================
+
+describe("Phase 7.2 — Tech Debt Registry integration with Blackboard", () => {
+  it("adds a tech debt, persists it, and survives reopen (migration v4→v5)", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Add a tech debt
+      const debt = {
+        id: "debt-1",
+        title: "Missing error handling in payment flow",
+        description: "The payment flow does not handle network timeouts gracefully",
+        location: "src/payment/flow.ts:42",
+        severity: "high" as const,
+        rootCause: "Timeout handling omitted during initial implementation",
+        estimatedCost: { tokens: 5000, calls: 10, wallTimeMs: 30000 },
+        paymentTrigger: "before next payment feature release",
+        state: "open" as const,
+        affectedContracts: ["gc-1"],
+        codeRefs: ["src/payment/flow.ts:42"],
+        timestamp: new Date().toISOString(),
+        author: "owner",
+      };
+      board.addTechDebt(debt);
+
+      // Verify it's there
+      const graph = board.getTechDebtGraph();
+      expect(graph.nodes).toHaveLength(1);
+      expect(graph.nodes[0].id).toBe("debt-1");
+      expect(graph.nodes[0].severity).toBe("high");
+
+      // Reopen (simulates daemon restart) — should migrate v4→v5 and preserve tech debt
+      const board2 = openBlackboard(filePath);
+      const graph2 = board2.getTechDebtGraph();
+      expect(graph2.nodes).toHaveLength(1);
+      expect(graph2.nodes[0].id).toBe("debt-1");
+      expect(graph2.nodes[0].title).toBe("Missing error handling in payment flow");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adds edge and retrieves transitive subgraph", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Add three debts: debt-1 (base), debt-2 (depends on debt-1), debt-3 (depends on debt-2)
+      board.addTechDebt({ id: "debt-1", title: "Base debt", description: "d1", location: "src/a.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebt({ id: "debt-2", title: "Child debt", description: "d2", location: "src/b.ts:1", severity: "medium", rootCause: "rc2", estimatedCost: { tokens: 200, calls: 2, wallTimeMs: 200 }, paymentTrigger: "trigger2", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebt({ id: "debt-3", title: "Grandchild debt", description: "d3", location: "src/c.ts:1", severity: "low", rootCause: "rc3", estimatedCost: { tokens: 300, calls: 3, wallTimeMs: 300 }, paymentTrigger: "trigger3", state: "acknowledged", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      board.addTechDebtEdge({ from: "debt-2", to: "debt-1", type: "depends_on" });
+      board.addTechDebtEdge({ from: "debt-3", to: "debt-2", type: "depends_on" });
+
+      // Get subgraph from debt-3 (should include debt-3, debt-2, debt-1)
+      const subgraph = board.getTechDebtSubgraph("debt-3");
+      expect(subgraph.nodes.map(n => n.id).sort()).toEqual(["debt-1", "debt-2", "debt-3"]);
+      expect(subgraph.edges).toHaveLength(2);
+
+      // Get subgraph from debt-2 (should include debt-2, debt-1)
+      const subgraph2 = board.getTechDebtSubgraph("debt-2");
+      expect(subgraph2.nodes.map(n => n.id).sort()).toEqual(["debt-1", "debt-2"]);
+      expect(subgraph2.edges).toHaveLength(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("links debt to contract and code reference", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Add a contract first
+      const lease = board.acquireLease("master-1")!;
+      board.putContract(makeContract({ id: "gc-1" }), lease.fence);
+      board.releaseLease("master-1", lease.fence);
+
+      // Add debt
+      board.addTechDebt({ id: "debt-1", title: "Schema debt", description: "d1", location: "src/schema.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      // Link to contract
+      const linked1 = board.linkDebtToContract("debt-1", "gc-1");
+      expect(linked1).toBe(true);
+
+      // Link to code ref
+      mkdirSync(join(tmp, "src"), { recursive: true });
+      writeFileSync(join(tmp, "src/schema.ts"), "export interface Schema {}", "utf8");
+      const linked2 = board.linkDebtToCode("debt-1", "src/schema.ts:42");
+      expect(linked2).toBe(true);
+
+      // Verify links persisted after reopen
+      const board2 = openBlackboard(filePath);
+      const graph = board2.getTechDebtGraph();
+      const node = graph.nodes.find(n => n.id === "debt-1")!;
+      expect(node.affectedContracts).toContain("gc-1");
+      expect(node.codeRefs).toContain("src/schema.ts:42");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate debt id", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addTechDebt({ id: "debt-1", title: "Debt 1", description: "d1", location: "src/a.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      expect(() => board.addTechDebt({ id: "debt-1", title: "Debt 1 dup", description: "d2", location: "src/b.ts:1", severity: "medium", rootCause: "rc2", estimatedCost: { tokens: 200, calls: 2, wallTimeMs: 200 }, paymentTrigger: "trigger2", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" })).toThrow(/already exists/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate edge", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addTechDebt({ id: "debt-1", title: "Debt 1", description: "d1", location: "src/a.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebt({ id: "debt-2", title: "Debt 2", description: "d2", location: "src/b.ts:1", severity: "medium", rootCause: "rc2", estimatedCost: { tokens: 200, calls: 2, wallTimeMs: 200 }, paymentTrigger: "trigger2", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebtEdge({ from: "debt-1", to: "debt-2", type: "depends_on" });
+
+      expect(() => board.addTechDebtEdge({ from: "debt-1", to: "debt-2", type: "depends_on" })).toThrow(/Duplicate/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects edge referencing non-existent node", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addTechDebt({ id: "debt-1", title: "Debt 1", description: "d1", location: "src/a.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      expect(() => board.addTechDebtEdge({ from: "debt-999", to: "debt-1", type: "depends_on" })).toThrow();
+      expect(() => board.addTechDebtEdge({ from: "debt-1", to: "debt-999", type: "depends_on" })).toThrow();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects cycle in tech debt graph", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addTechDebt({ id: "debt-1", title: "Debt 1", description: "d1", location: "src/a.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebt({ id: "debt-2", title: "Debt 2", description: "d2", location: "src/b.ts:1", severity: "medium", rootCause: "rc2", estimatedCost: { tokens: 200, calls: 2, wallTimeMs: 200 }, paymentTrigger: "trigger2", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebt({ id: "debt-3", title: "Debt 3", description: "d3", location: "src/c.ts:1", severity: "low", rootCause: "rc3", estimatedCost: { tokens: 300, calls: 3, wallTimeMs: 300 }, paymentTrigger: "trigger3", state: "open", affectedContracts: [], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      board.addTechDebtEdge({ from: "debt-2", to: "debt-1", type: "depends_on" });
+      board.addTechDebtEdge({ from: "debt-3", to: "debt-2", type: "depends_on" });
+
+      // This would create a cycle: debt-1 -> debt-3 -> debt-2 -> debt-1
+      expect(() => board.addTechDebtEdge({ from: "debt-1", to: "debt-3", type: "depends_on" })).toThrow(/cycle/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("handles empty graph gracefully", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      expect(board.getTechDebtGraph()).toEqual({ nodes: [], edges: [] });
+      expect(() => board.getTechDebtSubgraph("nonexistent")).toThrow(/not found/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("tech debt graph survives migration from v4 file (no techDebt field)", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      // Ensure directory exists
+      mkdirSync(dirname(filePath), { recursive: true });
+      // Write a v4 state file manually (no techDebt field)
+      const v4State = {
+        version: 4,
+        contracts: [makeContract({ id: "gc-1" })],
+        lease: undefined,
+        nodes: [],
+        lastFence: 0,
+        usage: {},
+        decisions: { nodes: [], edges: [] },
+      };
+      writeFileSync(filePath, JSON.stringify(v4State, null, 2), "utf8");
+
+      // Open should migrate to v5 with empty techDebt
+      const board = openBlackboard(filePath);
+      expect(board.getTechDebtGraph()).toEqual({ nodes: [], edges: [] });
+
+      // Add a debt after migration
+      board.addTechDebt({ id: "debt-1", title: "Post-migration debt", description: "d1", location: "src/a.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: ["gc-1"], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      // Reopen and verify
+      const board2 = openBlackboard(filePath);
+      const graph = board2.getTechDebtGraph();
+      expect(graph.nodes).toHaveLength(1);
+      expect(graph.nodes[0].id).toBe("debt-1");
+      expect(graph.nodes[0].affectedContracts).toContain("gc-1");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("updates debt status and queries with filters", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      board.addTechDebt({ id: "debt-1", title: "Debt 1", description: "d1", location: "src/a.ts:1", severity: "high", rootCause: "rc1", estimatedCost: { tokens: 100, calls: 1, wallTimeMs: 100 }, paymentTrigger: "trigger1", state: "open", affectedContracts: ["gc-1"], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebt({ id: "debt-2", title: "Debt 2", description: "d2", location: "src/b.ts:1", severity: "medium", rootCause: "rc2", estimatedCost: { tokens: 200, calls: 2, wallTimeMs: 200 }, paymentTrigger: "trigger2", state: "open", affectedContracts: ["gc-2"], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+      board.addTechDebt({ id: "debt-3", title: "Debt 3", description: "d3", location: "src/c.ts:1", severity: "low", rootCause: "rc3", estimatedCost: { tokens: 300, calls: 3, wallTimeMs: 300 }, paymentTrigger: "trigger3", state: "paid", affectedContracts: ["gc-1"], codeRefs: [], timestamp: new Date().toISOString(), author: "owner" });
+
+      // Update status
+      board.updateDebtStatus("debt-1", "acknowledged");
+      expect(board.getTechDebtGraph().nodes.find(n => n.id === "debt-1")?.state).toBe("acknowledged");
+
+      // Query by contract
+      const byContract = board.queryDebt({ contractId: "gc-1" });
+      expect(byContract.map(n => n.id).sort()).toEqual(["debt-1", "debt-3"]);
+
+      // Query by severity
+      const highSeverity = board.queryDebt({ severity: "high" });
+      expect(highSeverity.map(n => n.id)).toEqual(["debt-1"]);
+
+      // Query by state
+      const openDebts = board.queryDebt({ state: "open" });
+      expect(openDebts.map(n => n.id)).toEqual(["debt-2"]); // debt-1 was updated to acknowledged, debt-3 is paid
+
+      // Query combined
+      const openHigh = board.queryDebt({ contractId: "gc-1", severity: "high", state: "acknowledged" });
+      expect(openHigh.map(n => n.id)).toEqual(["debt-1"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

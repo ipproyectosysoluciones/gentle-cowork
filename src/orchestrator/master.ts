@@ -19,6 +19,7 @@ import type {
 } from "./types.ts";
 import type { Budget } from "../contract/schema.ts";
 import { evaluateGuards, type GuardConfig, type GuardsEvaluation } from "../contract/guards.ts";
+import { createMasterHerdrIntegration } from "../herdr-integration.ts";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -40,8 +41,9 @@ export class MasterOrchestrator {
   private readonly delegatedIds: string[] = [];
   private readonly guardConfig: GuardConfig;
   private nextId = 1;
+  private readonly herdrIntegration: ReturnType<typeof createMasterHerdrIntegration> | null = null;
 
-  constructor(options: MasterOptions) {
+  constructor(options: MasterOptions & { herdr?: boolean }) {
     this.board = options.board;
     this.nodeId = options.nodeId ?? newNodeId("master");
     this.pollIntervalMs = options.pollIntervalMs ?? 250;
@@ -54,6 +56,14 @@ export class MasterOrchestrator {
       onWarning: "escalate",
       ...options.guardConfig,
     };
+    
+    // Initialize Herdr integration if enabled
+    if (options.herdr) {
+      this.herdrIntegration = createMasterHerdrIntegration(this, {
+        agentId: this.nodeId,
+        board: this.board,
+      });
+    }
   }
 
   /** Internal logger for consistent output. */
@@ -73,6 +83,9 @@ export class MasterOrchestrator {
       status: "alive",
     };
     this.board.registerNode(node);
+    
+    // Start Herdr integration if enabled
+    this.herdrIntegration?.start();
   }
 
   /** Seeds one pending contract per step on the blackboard. Returns the stored contracts. */

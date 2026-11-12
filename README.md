@@ -188,8 +188,8 @@ graph TD
 | PI Task | Status | Notes |
 |---|---|---|
 | PI-T1: Dogfood → native background jobs | ✅ Done | `bash_background`, removed `run-dogfood.sh` |
-| PI-T2: Native command guards | ⏳ Planned | `/cowork-*` with native guards |
-| PI-T3: Herdr state export | ⏳ Planned | `src/herdr-state.ts` exists |
+| PI-T2: Native command guards | ✅ Done | `.pi/gentle-ai/runtime-guardrails.json` with `confirm` for all `/cowork-*` commands |
+| PI-T3: Herdr state export | ✅ Done | `src/herdr-state.ts`, `src/herdr-integration.ts` wired to MasterOrchestrator & LocalWorker (opt-in via `herdr: true`) |
 | PI-T4: Native fallback chains | ✅ Done | `profile-fallbacks.json` + PR-Agent `fallback_models` |
 | PI-T5: TUI dashboard skill | ✅ Done | `design/blackboard-dashboard/`, `src/dashboard.ts` |
 | PI-T6: Architectural docs | ✅ This section | Decision documented |

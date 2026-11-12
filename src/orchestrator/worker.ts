@@ -12,6 +12,7 @@ import type { Blackboard, NodeRegistration } from "../blackboard.ts";
 import type { TaskContract } from "../types.ts";
 import type { Budget } from "../contract/schema.ts";
 import type { StepExecutor, WorkerOptions, WorkerStepVerdict } from "./types.ts";
+import { createWorkerHerdrIntegration } from "../herdr-integration.ts";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,8 +32,9 @@ export class LocalWorker {
   /** Internal worker budget (simplified from schema Budget for local enforcement). */
   private readonly budget: { modelCalls: number; tokens: number; wallTimeMs: number };
   private budgetUsed: { modelCalls: number; tokens: number; wallTimeMs: number };
+  private readonly herdrIntegration: ReturnType<typeof createWorkerHerdrIntegration> | null = null;
 
-  constructor(options: WorkerOptions & { budget?: { modelCalls: number; tokens: number; wallTimeMs: number } }) {
+  constructor(options: WorkerOptions & { budget?: { modelCalls: number; tokens: number; wallTimeMs: number }; herdr?: boolean }) {
     this.board = options.board;
     this.executor = options.executor;
     this.nodeId = options.nodeId ?? newNodeId();
@@ -40,6 +42,13 @@ export class LocalWorker {
     this.leaseTtlMs = options.leaseTtlMs ?? 10_000;
     this.budget = options.budget ?? { modelCalls: Infinity, tokens: Infinity, wallTimeMs: Infinity };
     this.budgetUsed = { modelCalls: 0, tokens: 0, wallTimeMs: 0 };
+    
+    // Initialize Herdr integration if enabled
+    if (options.herdr) {
+      this.herdrIntegration = createWorkerHerdrIntegration({
+        agentId: this.nodeId,
+      });
+    }
   }
 
   /** Checks if any budget limit is exceeded. */
@@ -72,6 +81,9 @@ export class LocalWorker {
       status: "alive",
     };
     this.board.registerNode(node);
+    
+    // Start Herdr integration if enabled
+    this.herdrIntegration?.start();
   }
 
   /** Claims the next contract the master assigned to this worker, if any. */

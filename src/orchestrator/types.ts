@@ -157,6 +157,8 @@ export interface MasterOptions {
   verify?: MasterVerifier;
   /** Guard configuration for budget enforcement (Phase 6.4). */
   guardConfig?: Partial<GuardConfig>;
+  /** Enable Herdr state reporting (PI-T3). */
+  herdr?: boolean;
 }
 
 /** Options for the LocalWorker. */
@@ -173,4 +175,6 @@ export interface WorkerOptions {
   leaseTtlMs?: number;
   /** Budget limits for this worker (H6). */
   budget?: Budget;
+  /** Enable Herdr state reporting (PI-T3). */
+  herdr?: boolean;
 }

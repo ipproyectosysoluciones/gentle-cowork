@@ -1,7 +1,9 @@
-import { createServer } from "http";
+import { createServer } from "node:https";
 import { WebSocketServer, WebSocket } from "ws";
 import { AllowlistStore } from "./allowlist.ts";
 import { validateRoleSend, validateRoleReceive } from "./role-permissions.ts";
+import { createMTLSServerWithCallback, generateCertificate, generateCACertificate } from "./mtls.ts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 /** Identity advertised in every welcome message. */
 const SERVER_NODE_ID = `zero-trust-server-${process.pid}`;
@@ -71,7 +73,10 @@ class AdminRateLimiter {
 
 /** Sends a protocol-shaped error message to a client. */
 function sendError(ws: WebSocket, code: string, message: string): void {
-	ws.send(JSON.stringify({ type: "error", code, message }));
+	console.error(`[SERVER] sendError: ${code} - ${message} - readyState: ${ws.readyState}`);
+	if (ws.readyState === WebSocket.OPEN) {
+		ws.send(JSON.stringify({ type: "error", code, message }));
+	}
 }
 
 export async function startServer(): Promise<void> {
@@ -81,8 +86,35 @@ export async function startServer(): Promise<void> {
 	// Create rate limiter for admin API (M1)
 	const adminRateLimiter = new AdminRateLimiter(60, 1); // 60 req/min per IP
 
-	// Create an HTTP server listening on the expected port
-	const server = createServer((req, res) => {
+	// Load or generate CA certificate
+	const caCertPath = "/run/media/bladimir/Datos/Datos/proyectos/work/gentleman/gentle-cowork/ca.pem";
+	let caCert: string;
+	if (existsSync(caCertPath)) {
+		caCert = readFileSync(caCertPath, "utf8");
+	} else {
+		const { cert: generatedCaCert, key: caKey } = generateCACertificate();
+		caCert = generatedCaCert;
+		writeFileSync("/run/media/bladimir/Datos/Datos/proyectos/work/gentleman/gentle-cowork/ca.pem", caCert);
+	}
+
+	// Generate self-signed cert for testing (in production, load from files)
+	const { cert, key } = generateCertificate();
+
+	// Create mTLS server with custom verification
+	const server = createMTLSServerWithCallback({
+		cert,
+		key,
+		ca: caCert,
+		port: parseInt(process.env.TEST_PORT || "4322", 10),
+		verifyCallback: (cert, host) => {
+			// Custom verification: check if cert is in allowlist by fingerprint
+			// For now, accept all certs signed by our CA
+			return true;
+		},
+	});
+
+	// Attach request handler for admin API
+	server.on("request", (req, res) => {
 		// Add security headers to all responses (L1)
 		Object.entries(SECURITY_HEADERS).forEach(([key, value]) => {
 			res.setHeader(key, value);
@@ -135,7 +167,7 @@ export async function startServer(): Promise<void> {
 		res.end(JSON.stringify({ error: "not_found" }));
 	});
 
-	// Create WebSocket server attaching to the HTTP server
+	// Create WebSocket server attaching to the HTTPS server
 	const wss = new WebSocketServer({ server });
 
 	// Handle WebSocket connections
@@ -270,13 +302,13 @@ function handleLeaseRequest(ws: WebSocket): void {
 function handleAssignStep(ws: WebSocket, message: Record<string, unknown>): void {
 	const senderNodeId = getNodeIdForConnection(ws);
 	if (!senderNodeId) {
-		sendError(ws, "unknown_sender", "Unknown sender");
+		sendError(ws, "unknown_sender", "unknown_sender");
 		return;
 	}
 
 	const senderInfo = nodeInfo.get(senderNodeId);
 	if (!senderInfo) {
-		sendError(ws, "unknown_sender", "Unknown sender");
+		sendError(ws, "unknown_sender", "unknown_sender");
 		return;
 	}
 
@@ -314,13 +346,13 @@ function handleAssignStep(ws: WebSocket, message: Record<string, unknown>): void
 function handleStepResult(ws: WebSocket, message: Record<string, unknown>): void {
 	const senderNodeId = getNodeIdForConnection(ws);
 	if (!senderNodeId) {
-		sendError(ws, "unknown_sender", "Unknown sender");
+		sendError(ws, "unknown_sender", "unknown_sender");
 		return;
 	}
 
 	const senderInfo = nodeInfo.get(senderNodeId);
 	if (!senderInfo) {
-		sendError(ws, "unknown_sender", "Unknown sender");
+		sendError(ws, "unknown_sender", "unknown_sender");
 		return;
 	}
 

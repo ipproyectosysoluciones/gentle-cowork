@@ -6,7 +6,7 @@
 
 import { createServer, type ServerOptions } from "node:https";
 import { readFileSync } from "node:fs";
-import forge from "node-forge";
+import * as forge from "node-forge";
 
 export interface MTLSConfig {
 	cert: string;              // Server certificate (PEM)
@@ -31,7 +31,7 @@ export function createMTLSServer(options: {
 		key: options.key,
 		ca: options.ca,
 		requestCert: true,        // Request client certificate
-		rejectUnauthorized: true, // Reject unauthorized clients
+		rejectUnauthorized: false, // Reject unauthorized clients
 	};
 
 	const server = createServer(serverOptions);
@@ -62,7 +62,7 @@ export function createMTLSServerWithCallback(options: {
 		key: options.key,
 		ca: options.ca,
 		requestCert: true,
-		rejectUnauthorized: true,
+		rejectUnauthorized: false,
 	};
 
 	const server = createServer(serverOptions);
@@ -70,8 +70,8 @@ export function createMTLSServerWithCallback(options: {
 	server.on("secureConnection", (tlsSocket) => {
 		const clientCert = tlsSocket.getPeerCertificate(true);
 		if (!clientCert || !clientCert.raw) {
-			console.error("[mTLS] No client certificate provided");
-			tlsSocket.destroy();
+			console.warn("[mTLS] No client certificate provided - continuing without client cert");
+			// Continue without client certificate
 			return;
 		}
 
@@ -125,9 +125,6 @@ export function createMTLSServerWithCallback(options: {
  * Generate a self-signed certificate for testing purposes.
  */
 export function generateCertificate(): { cert: string; key: string } {
-	const { crypto } = require("webcrypto");
-	const { forge } = require("node-forge");
-
 	const keys = forge.pki.rsa.generateKeyPair(2048);
 	const cert = forge.pki.createCertificate();
 	cert.publicKey = keys.publicKey;

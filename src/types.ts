@@ -191,3 +191,74 @@ export interface VerifyVerdict {
   /** Free-text explanation of the verdict. */
   report: string;
 }
+
+// ============================================================================
+// Phase 7.4 — Validation Suites Types
+// ============================================================================
+
+/** A single finding from a validation suite. */
+export interface ValidationFinding {
+  /** Unique identifier for this finding. */
+  id: string;
+  /** Severity level. */
+  severity: "info" | "warning" | "error";
+  /** Human-readable message. */
+  message: string;
+  /** Optional location (file:line). */
+  location?: string;
+  /** Optional suggestion for fixing. */
+  suggestion?: string;
+}
+
+/** Result of running a validation suite. */
+export interface ValidationResult {
+  /** The suite that produced this result. */
+  suiteId: string;
+  /** Whether the suite passed. */
+  passed: boolean;
+  /** Individual findings from the suite. */
+  findings: ValidationFinding[];
+  /** Optional metadata (duration, etc.). */
+  metadata?: Record<string, unknown>;
+}
+
+/** Context passed to validation suites. Shape depends on the suite. */
+export interface ValidationContext {
+  /** File contents for static analysis (SAST). */
+  files?: Record<string, string>;
+  /** Metrics for performance/maintainability suites. */
+  metrics?: {
+    wallTimeMs?: number;
+    memoryMB?: number;
+    cpuPercent?: number;
+    cyclomaticComplexity?: number;
+    coupling?: number;
+    coverage?: number;
+  };
+  /** Thresholds for threshold-based suites. */
+  thresholds?: {
+    wallTimeMs?: number;
+    memoryMB?: number;
+    cpuPercent?: number;
+    cyclomaticComplexity?: number;
+    coupling?: number;
+    coverage?: number;
+  };
+  /** Arbitrary additional data. */
+  [key: string]: unknown;
+}
+
+/** A validation suite that can be run against a codebase/context. */
+export interface ValidationSuite {
+  /** Unique identifier (e.g., "sast-basic"). */
+  id: string;
+  /** Human-readable name. */
+  name: string;
+  /** Version of the suite. */
+  version: string;
+  /**
+   * Runs the suite against the given context.
+   * Context shape depends on the suite (files, metrics, thresholds, etc.)
+   */
+  run(context: ValidationContext): Promise<ValidationResult>;
+}

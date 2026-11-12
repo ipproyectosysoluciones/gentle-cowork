@@ -142,19 +142,39 @@ export async function startServer(): Promise<void> {
 				return;
 			}
 			
+			let handled = false;
 			if (req.url === "/api/admin/allowlist" && req.method === "POST") {
 				auditLog("admin:allowlist:update", `action=update`, req.socket.remoteAddress ?? "unknown");
+				res.writeHead(200, { "content-type": "application/json", ...SECURITY_HEADERS });
+				res.end(JSON.stringify({ success: true }));
+				handled = true;
 			} else if (req.url === "/api/admin/pair/start" && req.method === "POST") {
 				auditLog("admin:pair:start", "", req.socket.remoteAddress ?? "unknown");
+				res.writeHead(200, { "content-type": "application/json", ...SECURITY_HEADERS });
+				res.end(JSON.stringify({ success: true }));
+				handled = true;
 			} else if (req.url === "/api/admin/pair/regenerate" && req.method === "POST") {
 				auditLog("admin:pair:regenerate", "", req.socket.remoteAddress ?? "unknown");
+				res.writeHead(200, { "content-type": "application/json", ...SECURITY_HEADERS });
+				res.end(JSON.stringify({ success: true }));
+				handled = true;
 			} else if (req.url === "/api/admin/pair/cancel" && req.method === "POST") {
 				auditLog("admin:pair:cancel", "", req.socket.remoteAddress ?? "unknown");
+				res.writeHead(200, { "content-type": "application/json", ...SECURITY_HEADERS });
+				res.end(JSON.stringify({ success: true }));
+				handled = true;
 			} else if (req.url === "/api/admin/verify" && req.method === "POST") {
 				auditLog("admin:verify", "", req.socket.remoteAddress ?? "unknown");
+				res.writeHead(200, { "content-type": "application/json", ...SECURITY_HEADERS });
+				res.end(JSON.stringify({ success: true }));
+				handled = true;
 			} else if (req.url === "/api/admin/unpair" && req.method === "POST") {
 				auditLog("admin:unpair", "", req.socket.remoteAddress ?? "unknown");
+				res.writeHead(200, { "content-type": "application/json", ...SECURITY_HEADERS });
+				res.end(JSON.stringify({ success: true }));
+				handled = true;
 			}
+			if (handled) return;
 		}
 
 		// For non-API requests, serve the WebSocket upgrade

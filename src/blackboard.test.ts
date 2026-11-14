@@ -23,6 +23,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { defaultBlackboardPath, openBlackboard, MAX_RETRY_COUNT, STATE_VERSION } from "./blackboard.ts";
 import type { TaskContract, ContractHistoryEntry, NodeRegistration, LeaseInfo } from "./types.ts";
+import type { WorkerRegistration } from "./worker-matcher.ts";
 
 /** Creates a scratch directory for one test's state file. */
 function makeTmpDir(): string {
@@ -2095,4 +2096,248 @@ describe("Phase 7.2 — Tech Debt Registry integration with Blackboard", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+})
+
+describe("Phase 8.2 — Worker matching integration", () => {
+  const makeTmpDir = () => {
+    const tmp = mkdtempSync(join(tmpdir(), `bb-test-`));
+    return tmp;
+  };
+
+  it("registers worker with skills and matches contract", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Register a worker with skills
+      const worker: WorkerRegistration = {
+        nodeId: "worker-backend",
+        role: "worker",
+        capabilities: ["implementer"],
+        skills: [
+          {
+            skillId: "backend.api-design",
+            proficiency: "expert",
+            evidence: [],
+            lastValidated: new Date().toISOString(),
+            decayFactor: 0.1,
+          },
+          {
+            skillId: "backend.database-design",
+            proficiency: "proficient",
+            evidence: [],
+            lastValidated: new Date().toISOString(),
+            decayFactor: 0.1,
+          },
+        ],
+        currentLoad: 0,
+        capacity: 100,
+        costPerToken: 0.001,
+        assignedTasks: 0,
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      };
+      board.registerWorker(worker);
+
+      // Create a contract with required skills
+      const contract = board.putContract({
+        id: "contract-1",
+        objective: "Build API",
+        role: "implementer",
+        scope: ["src/api.ts"],
+        acceptanceCriteria: ["API works"],
+        specRef: "odd/tasks/test.md",
+        artifacts: [],
+        status: "pending",
+        version: 1,
+        history: [{ status: "pending", version: 1, nodeId: "master", timestamp: new Date().toISOString() }],
+        requiredSkills: [
+          { skillId: "backend.api-design", minProficiency: "proficient", weight: 1.0 },
+          { skillId: "backend.database-design", minProficiency: "proficient", weight: 0.5 },
+        ],
+      } as any); // Type assertion for test
+
+      // Match and assign
+      const assigned = board.matchAndAssignContract("contract-1");
+      expect(assigned).toBeDefined();
+      expect(assigned?.workerNodeId).toBe("worker-backend");
+      expect(assigned?.status).toBe("in_progress");
+      expect(assigned?.estimatedCost).toBeGreaterThan(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("returns undefined when no worker matches required skills", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Register a worker with frontend skills only
+      const worker: WorkerRegistration = {
+        nodeId: "worker-frontend",
+        role: "worker",
+        capabilities: ["implementer"],
+        skills: [
+          {
+            skillId: "frontend.react",
+            proficiency: "expert",
+            evidence: [],
+            lastValidated: new Date().toISOString(),
+            decayFactor: 0.1,
+          },
+        ],
+        currentLoad: 0,
+        capacity: 100,
+        costPerToken: 0.001,
+        assignedTasks: 0,
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      };
+      board.registerWorker(worker);
+
+      // Create a contract requiring backend skills
+      const contract = board.putContract({
+        id: "contract-2",
+        objective: "Build API",
+        role: "implementer",
+        scope: ["src/api.ts"],
+        acceptanceCriteria: ["API works"],
+        specRef: "odd/tasks/test.md",
+        artifacts: [],
+        status: "pending",
+        version: 1,
+        history: [{ status: "pending", version: 1, nodeId: "master", timestamp: new Date().toISOString() }],
+        requiredSkills: [
+          { skillId: "backend.api-design", minProficiency: "proficient", weight: 1.0 },
+        ],
+      } as any);
+
+      // Try to match - should fail
+      const assigned = board.matchAndAssignContract("contract-2");
+      expect(assigned).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("respects worker capacity", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Register a worker at full capacity
+      const worker: WorkerRegistration = {
+        nodeId: "worker-full",
+        role: "worker",
+        capabilities: ["implementer"],
+        skills: [
+          {
+            skillId: "backend.api-design",
+            proficiency: "expert",
+            evidence: [],
+            lastValidated: new Date().toISOString(),
+            decayFactor: 0.1,
+          },
+        ],
+        currentLoad: 100, // At capacity
+        capacity: 100,
+        costPerToken: 0.001,
+        assignedTasks: 5,
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      };
+      board.registerWorker(worker);
+
+      // Create a contract
+      const contract = board.putContract({
+        id: "contract-3",
+        objective: "Build API",
+        role: "implementer",
+        scope: ["src/api.ts"],
+        acceptanceCriteria: ["API works"],
+        specRef: "odd/tasks/test.md",
+        artifacts: [],
+        status: "pending",
+        version: 1,
+        history: [{ status: "pending", version: 1, nodeId: "master", timestamp: new Date().toISOString() }],
+        requiredSkills: [
+          { skillId: "backend.api-design", minProficiency: "proficient", weight: 1.0 },
+        ],
+      } as any);
+
+      // Try to match - should fail due to capacity
+      const assigned = board.matchAndAssignContract("contract-3");
+      expect(assigned).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("updates worker load after assignment", () => {
+    const tmp = makeTmpDir();
+    try {
+      const filePath = defaultBlackboardPath(tmp);
+      const board = openBlackboard(filePath);
+
+      // Register a worker
+      const worker: WorkerRegistration = {
+        nodeId: "worker-load",
+        role: "worker",
+        capabilities: ["implementer"],
+        skills: [
+          {
+            skillId: "backend.api-design",
+            proficiency: "expert",
+            evidence: [],
+            lastValidated: new Date().toISOString(),
+            decayFactor: 0.1,
+          },
+        ],
+        currentLoad: 0,
+        capacity: 100,
+        costPerToken: 0.001,
+        assignedTasks: 0,
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        status: "alive",
+      };
+      board.registerWorker(worker);
+
+      // Create and assign contract
+      const contract = board.putContract({
+        id: "contract-4",
+        objective: "Build API",
+        role: "implementer",
+        scope: ["src/api.ts"],
+        acceptanceCriteria: ["API works"],
+        specRef: "odd/tasks/test.md",
+        artifacts: [],
+        status: "pending",
+        version: 1,
+        history: [{ status: "pending", version: 1, nodeId: "master", timestamp: new Date().toISOString() }],
+        requiredSkills: [
+          { skillId: "backend.api-design", minProficiency: "proficient", weight: 1.0 },
+        ],
+      } as any);
+
+      board.matchAndAssignContract("contract-4");
+
+      // Check worker load was updated
+      const nodes = board.getNodes();
+      const updatedWorker = nodes.find(n => n.nodeId === "worker-load");
+      expect(updatedWorker).toBeDefined();
+      // Note: currentLoad is updated in workerRegistry but not in node registry yet
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
+
+;

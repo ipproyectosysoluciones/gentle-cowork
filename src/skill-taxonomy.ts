@@ -309,6 +309,16 @@ export interface SkillEvidence {
   decayFactor: number; // 0-1, applied annually
 }
 
+/** Required skill for a task with minimum proficiency and weight. */
+export interface MicroSkillRequirement {
+  /** Skill ID (must exist in SkillTaxonomy). */
+  skillId: string;
+  /** Minimum proficiency required. */
+  minProficiency: "novice" | "competent" | "proficient" | "expert" | "master";
+  /** Weight in matching score (0-1). */
+  weight: number;
+}
+
 /** Node skill declaration for registry. */
 export interface NodeSkillDeclaration {
   nodeId: string;

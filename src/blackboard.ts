@@ -36,6 +36,8 @@ import { isAbsolute, normalize, resolve } from "node:path";
 import { dirname, join } from "node:path";
 
 import type { TaskContract, TaskStatus, ContractHistoryEntry } from "./types.ts";
+import { WorkerMatcher, WorkerRegistry, type WorkerRegistration } from "./worker-matcher.ts";
+import type { MicroSkillRequirement } from "./skill-taxonomy.ts";
 import {
 	type ContractUsage,
 	type NodeUsage,
@@ -425,6 +427,10 @@ export interface Blackboard {
   registerNode(node: NodeRegistration): void;
   heartbeat(nodeId: string): void;
   getNodes(): NodeRegistration[];
+  /** Phase 8.2: Worker registration with skills for matching */
+  registerWorker(worker: WorkerRegistration): void;
+  /** Phase 8.2: Auto-match and assign a pending contract to the best worker */
+  matchAndAssignContract(id: string, presentedFence?: number): TaskContract | undefined;
   /** Orphan recovery (master-only) */
   runOrphanRecovery(): { recovered: number; requeued: number };
   /** Merge contracts from another node (conflict resolution by version counter) */
@@ -494,6 +500,8 @@ export function openBlackboard(filePath: string): Blackboard {
   let lease: LeaseInfo | undefined = loadedLease;
   let fenceCounter = lastFence;
   const nodes = new Map(loadedNodes.map((node) => [node.nodeId, node] as const));
+  // Phase 8.2: Worker registry for skill-based matching
+  const workerRegistry = new WorkerRegistry();
   const usage = new Map(Object.entries(loadedUsage));
   let decisions: DecisionGraph = loadedDecisions ?? { nodes: [], edges: [] };
   let techDebt: TechDebtGraph = loadedTechDebt ?? { nodes: [], edges: [] };
@@ -760,6 +768,94 @@ export function openBlackboard(filePath: string): Blackboard {
       });
     },
     getNodes: () => [...nodes.values()].map((n) => ({ ...n })),
+    /** Phase 8.2: Register a worker with skills for matching. */
+    registerWorker: (worker: WorkerRegistration) => {
+      withWriteLock(() => {
+        // Also register in the node registry if not present
+        const existingNode = nodes.get(worker.nodeId);
+        if (!existingNode) {
+          nodes.set(worker.nodeId, {
+            nodeId: worker.nodeId,
+            role: worker.role,
+            capabilities: worker.capabilities,
+            startedAt: worker.startedAt,
+            lastHeartbeat: worker.lastHeartbeat,
+            status: worker.status,
+          });
+        }
+        workerRegistry.registerWorker(worker);
+      });
+    },
+    /** Phase 8.2: Auto-match and assign a pending contract to the best worker. */
+    matchAndAssignContract: (id: string, presentedFence?: number): TaskContract | undefined => {
+      return withWriteLock(() => {
+        // Validate fence inside the lock (H3: cryptographic fence must match exactly)
+        if (lease && typeof presentedFence === "number") {
+          if (presentedFence !== lease.fence) {
+            throw new Error(
+              `Fence rejected: presented ${presentedFence} does not match current ${lease.fence} (stale or invalid holder)`
+            );
+          }
+        }
+        const existing = contracts.get(id);
+        if (!existing || existing.status !== "pending") return undefined;
+        
+        // Check if contract has required skills
+        const requirements = existing.requiredSkills;
+        if (!requirements || requirements.length === 0) {
+          // No skill requirements - cannot auto-match
+          return undefined;
+        }
+        
+        // Create matcher with default weights
+        const matcher = new WorkerMatcher(workerRegistry);
+        
+        // Find best match
+        const matchResult = matcher.findBestMatch(requirements);
+        
+        if (!matchResult.matchedWorkerId) {
+          // No suitable worker found
+          return undefined;
+        }
+        
+        // Check capacity
+        const capacityCheck = matcher.checkCapacity(matchResult.matchedWorkerId, requirements);
+        if (!capacityCheck.hasCapacity) {
+          // Worker at capacity
+          return undefined;
+        }
+        
+        // Estimate cost
+        const costEstimation = matcher.estimateCost(requirements);
+        
+        const now = new Date().toISOString();
+        const nextVersion = existing.version + 1;
+        const historyEntry: ContractHistoryEntry = {
+          status: "in_progress",
+          version: nextVersion,
+          nodeId: matchResult.matchedWorkerId,
+          timestamp: now,
+          leaseFence: lease?.fence,
+        };
+        const updated: TaskContract = {
+          ...existing,
+          status: "in_progress",
+          workerNodeId: matchResult.matchedWorkerId,
+          version: nextVersion,
+          history: [...existing.history, historyEntry],
+          leaseFence: lease?.fence,
+          estimatedCost: costEstimation.estimatedCost,
+        };
+        
+        // Update worker load
+        workerRegistry.updateLoad(matchResult.matchedWorkerId, 
+          workerRegistry.getWorker(matchResult.matchedWorkerId)!.currentLoad + 10);
+        workerRegistry.incrementAssignedTasks(matchResult.matchedWorkerId);
+        
+        contracts.set(id, updated);
+        return copyContract(updated);
+      });
+    },
     runOrphanRecovery: () => {
       return withWriteLock(() => {
         if (!lease) return { recovered: 0, requeued: 0 };

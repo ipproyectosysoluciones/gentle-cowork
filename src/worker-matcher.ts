@@ -11,22 +11,13 @@ import {
   SkillCategory,
   PROFICIENCY_ORDER,
   type SkillEvidence,
+  type MicroSkillRequirement,
   validateSkillEvidence,
   createSkillEvidence,
   getSkillTaxonomy,
   getSkillById,
 } from "./skill-taxonomy.ts";
-import type { NodeRegistration } from "./blackboard.ts";
-
-/** Required skill for a task with minimum proficiency and weight. */
-export interface MicroSkillRequirement {
-  /** Skill ID (must exist in SkillTaxonomy). */
-  skillId: string;
-  /** Minimum proficiency required. */
-  minProficiency: "novice" | "competent" | "proficient" | "expert" | "master";
-  /** Weight in matching score (0-1). */
-  weight: number;
-}
+import type { NodeRegistration } from "./types.ts";
 
 /** Result of worker matching. */
 export interface WorkerMatchResult {

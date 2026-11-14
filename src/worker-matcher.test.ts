@@ -8,10 +8,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   WorkerMatcher,
   WorkerRegistry,
-  type MicroSkillRequirement,
   type WorkerMatchResult,
 } from "./worker-matcher.ts";
-import type { MicroSkill, ProficiencyLevel, SkillCategory } from "./skill-taxonomy.ts";
+import type { MicroSkill, ProficiencyLevel, SkillCategory, MicroSkillRequirement } from "./skill-taxonomy.ts";
 import { createSkillEvidence } from "./skill-taxonomy.ts";
 import type { NodeRegistration } from "./blackboard.ts";
 

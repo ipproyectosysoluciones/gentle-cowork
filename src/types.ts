@@ -96,6 +96,7 @@ export function createTaskContract(
 }
 
 import type { Budget } from "./contract/schema.ts";
+import type { MicroSkillRequirement, SkillEvidence } from "./skill-taxonomy.ts";
 import { resolve, normalize, isAbsolute, relative } from "node:path";
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "failed" | "paused";
@@ -152,6 +153,12 @@ export interface TaskContract {
 
   /** Budget limits for this contract (Phase 6.4). */
   budget?: Budget;
+
+  /** Required micro-skills with minimum proficiency and weight (Phase 8.2). */
+  requiredSkills?: MicroSkillRequirement[];
+
+  /** Estimated cost for this contract based on matched worker (Phase 8.2). */
+  estimatedCost?: number;
 }
 
 /** Node registration for multi-node coordination. */
@@ -162,6 +169,17 @@ export interface NodeRegistration {
   startedAt: string;
   lastHeartbeat: string;
   status: "alive" | "stale";
+
+  /** Declared micro-skills with proficiency evidence (Phase 8.2). */
+  skills?: SkillEvidence[];
+  /** Current load (0-100 scale) (Phase 8.2). */
+  currentLoad?: number;
+  /** Maximum capacity (0-100 scale) (Phase 8.2). */
+  capacity?: number;
+  /** Cost per token in currency units (Phase 8.2). */
+  costPerToken?: number;
+  /** Current assigned tasks count (Phase 8.2). */
+  assignedTasks?: number;
 }
 
 /** Lease information with fencing token. */
